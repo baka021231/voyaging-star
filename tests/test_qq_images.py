@@ -36,10 +36,10 @@ class ImageTests(unittest.TestCase):
         self.assertIsNone(incoming_text(group, 123, allow_all_groups=True))
         group['message'] = [{'type': 'at', 'data': {'qq': '456'}}] + event['message']
         self.assertTrue(incoming_text(group, 123, allow_all_groups=True).images)
-        self.assertIsNone(incoming_text(dict(group, user_id=789), 123, allow_all_groups=True))
+        self.assertEqual(incoming_text(dict(group, user_id=789), 123, allow_all_groups=True).images, ({'file': 'pic'},))
         group['message'] += [{'type': 'text', 'data': {'text': '小爱你好'}}]
         other = incoming_text(dict(group, user_id=789), 123, allow_all_groups=True)
-        self.assertEqual(other.images, ())
+        self.assertEqual(other.images, ({'file': 'pic'},))
 
     def test_save_local_and_reject_invalid_or_oversized_files(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -113,7 +113,10 @@ class ImageTests(unittest.TestCase):
                 self.assertEqual(result, ['/tmp/image.png'])
                 save.assert_called_once_with('', image['url'])
             self.assertEqual(calls, [('get_image', {'file': 'pic'})])
-            for incoming in (Incoming(Source('group', 999, 789), '', images=(image,)),
+            with patch('qq_chat.bridge.save_image', return_value=Path('/tmp/group.png')):
+                result = await bridge.receive_images(Incoming(Source('group', 999, 789), '', images=(image,)))
+                self.assertEqual(result, ['/tmp/group.png'])
+            for incoming in (Incoming(Source('private', 789, 789), '', images=(image,)),
                              Incoming(own, '', images=(image,) * 6),
                              Incoming(own, '', images=({'file_size': MAX_IMAGE_BYTES + 1},))):
                 for prefer_url in (False, True):

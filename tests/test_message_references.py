@@ -182,7 +182,7 @@ class ReferenceRoutingTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn('以下才是本轮新消息', result[1])
                 self.assertTrue(result[1].endswith('看看这个') or '图片已保存' in result[1])
                 self.assertEqual(result[0].sender_id, sender)
-                if quoted_image and sender == 123 and not image_fails:
+                if quoted_image and not image_fails:
                     self.assertEqual(result[2], ('/temporary/reference.png',))
                 elif image_fails:
                     self.assertIn('参考图片获取失败', result[1])
@@ -201,7 +201,7 @@ class ReferenceRoutingTests(unittest.IsolatedAsyncioTestCase):
     async def test_reference_image_is_available_to_owner(self):
         await self.check_route(quoted_image=True)
 
-    async def test_guest_gets_text_reference_but_no_image_file(self):
+    async def test_guest_gets_reference_image(self):
         await self.check_route(sender=789, quoted_image=True)
 
     async def test_failed_reference_image_does_not_drop_text(self):
