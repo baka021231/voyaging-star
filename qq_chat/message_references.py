@@ -1,6 +1,7 @@
 """Bounded OneBot reply/forward expansion. Results are untrusted reference data."""
 import asyncio
 import json
+from .message_text import mention_text
 
 MAX_REFERENCES = 5
 MAX_CALLS = 6
@@ -105,7 +106,7 @@ class Expander:
                 else:
                     text.append('[图片未读取：权限或数量限制]')
             elif kind == 'at':
-                text.append('[提及其他用户]')
+                text.append(mention_text(data))
             elif kind in ('forward', 'node'):
                 # Flush text before nested content so the original order stays clear.
                 if text:
