@@ -8,7 +8,8 @@ from pathlib import Path
 import tempfile
 from unittest.mock import patch
 
-from qq_chat.bridge import Bridge, Incoming, Source
+from qq_chat.bridge import Bridge
+from qq_chat.message_policy import Incoming, Source
 from qq_chat.agents.codex import CodexAgent
 
 

@@ -9,7 +9,8 @@ from unittest.mock import patch
 
 from qq_chat.codex_app import AppServer, progress_text
 from qq_chat.agents.codex import CodexAgent
-from qq_chat.bridge import Bridge, Source, incoming_text, speaker_message, owner_request, conversation_key
+from qq_chat.bridge import Bridge
+from qq_chat.message_policy import Source, incoming_text, speaker_message, owner_request, conversation_key
 
 
 class MessagePolicyTests(unittest.TestCase):

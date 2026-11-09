@@ -9,6 +9,7 @@ import logging
 import time
 
 from . import prompts
+from .message_policy import Source, owner_request
 from .agents.base import CHAT, NONE, Interrupted
 from .tasks import LABELS, TERMINAL
 
@@ -100,7 +101,6 @@ class TaskCommands:
                 f"任务：{row['goal'][:200]}\n报告（节选，全文在 workspace/tasks/{row['id']}.md）：\n{body}")
 
     async def report_task(self, ident):
-        from .bridge import Source
         report_locks = self.__dict__.setdefault('_report_locks', defaultdict(asyncio.Lock))
         async with report_locks[ident]:
             row = self.tasks.get(ident)
@@ -146,7 +146,6 @@ class TaskCommands:
                     logging.warning('Task report pending id=%s', ident)
 
     async def task_receipt(self, ident):
-        from .bridge import Source
         locks = self.__dict__.setdefault('_receipt_locks', defaultdict(asyncio.Lock))
         async with locks[ident]:
             row = self.tasks.get(ident)
@@ -175,7 +174,6 @@ class TaskCommands:
             await asyncio.gather(*jobs, return_exceptions=True)
 
     async def task_command(self, source, text):
-        from .bridge import owner_request
         if not owner_request(source, self.cfg['owner_qq']):
             return
         parts = text.split(maxsplit=2)
@@ -204,7 +202,6 @@ class TaskCommands:
             await self.send(source, str(error))
 
     async def fast_command(self, source, text):
-        from .bridge import owner_request
         if not owner_request(source, self.cfg['owner_qq']):
             return
         try:

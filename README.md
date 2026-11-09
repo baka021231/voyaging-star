@@ -7,7 +7,8 @@ NapCat OneBot 11 与本机 Agent 会话之间的桥接，支持 Codex、Claude C
 | 路径 | 用途 |
 | --- | --- |
 | `qq_chat/` | 桥接程序包，用 `python3 -m qq_chat` 启动 |
-| `qq_chat/bridge.py` | 消息接收、权限、会话与回复调度 |
+| `qq_chat/bridge.py` | 消息收发、会话与回复调度及功能编排 |
+| `qq_chat/message_policy.py` | 消息数据类型、事件解析、身份判断、会话分隔与发言人标签 |
 | `qq_chat/codex_app.py` | Codex App Server 客户端 |
 | `qq_chat/agents/` | Codex/Claude/Grok 适配器、profile 校验和状态迁移 |
 | `qq_chat/prompts.py` | 发给模型的提示词（权限指令、历史与群聊上下文、附件和图片说明） |

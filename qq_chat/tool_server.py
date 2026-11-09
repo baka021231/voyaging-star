@@ -12,6 +12,8 @@ import sys
 import tempfile
 import time
 
+from .message_policy import owner_request
+
 NAMES = ('dispatch_task', 'list_tasks', 'task_status', 'stop_task', 'send_to_task', 'poke', 'memory_search')
 FRONT_TOOLS = frozenset('mcp__qq__' + name for name in NAMES)
 # Command-entry tools for FULL single-agent turns; not part of the Claude FRONT set.
@@ -92,7 +94,6 @@ class ToolServer:
 
     @asynccontextmanager
     async def grant(self, source, *, names=NAMES):
-        from .bridge import owner_request
         names = frozenset(names)
         guest_voice = (self.bridge.group_speak_enabled(source) and names == {SPEAK})
         if self.server is None or not (owner_request(source, self.bridge.cfg['owner_qq']) or guest_voice):
@@ -152,7 +153,6 @@ class ToolServer:
             self.clients.discard(task)
 
     async def call(self, token, name, arguments):
-        from .bridge import owner_request
         bound = self.grants.get(token) if isinstance(token, str) else None
         if not bound or bound[2] <= time.monotonic():
             raise ValueError('工具授权已失效')
