@@ -1,5 +1,12 @@
 # 变更记录
 
+## 2026-11-09
+
+### 项目更名为远航星（Voyaging Star）
+
+- 项目由 qq-chat 更名为远航星，英文名 Voyaging Star。GitHub 仓库改为 `baka021231/voyaging-star`，本机目录改为 `~/projects/voyaging-star`；Python 包名 `qq_chat`、启动命令和 systemd 服务名不变。
+- 本机 systemd 单元和 `config.json` 中的语音后端、原声库路径随目录一并更新（本地配置，不提交）；配置模板和文档中的示例路径同步修改。
+
 ## 2026-11-03
 
 ### 检索模型换成 bge-m3，并在启动时核对向量

@@ -1,6 +1,8 @@
-# QQ 聊天桥接
+# 远航星（Voyaging Star）
 
-NapCat OneBot 11 与本机 Agent 会话之间的桥接，支持 Codex、Claude Code 和主人单 agent Grok。
+远航星是运行在本机的 QQ 机器人桥接服务：通过 NapCat（OneBot 11）收发 QQ 消息，交由本机 Agent 会话处理并回复，支持 Codex、Claude Code 和主人单 agent Grok。
+
+仓库与项目目录名为 `voyaging-star`；Python 包名仍为 `qq_chat`，启动方式不变。
 
 ## 目录
 
