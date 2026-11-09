@@ -117,7 +117,7 @@
 
 ```sh
 ~/.local/share/aemeath-voice/indextts-venv/bin/python -u \
-  /home/baka/projects/qq-chat/tools/indextts_backend.py \
+  /home/baka/projects/voyaging-star/tools/indextts_backend.py \
   --package-dir ~/.local/share/aemeath-voice/indextts-v5 --device cuda
 ```
 
