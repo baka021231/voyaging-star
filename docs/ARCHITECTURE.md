@@ -32,7 +32,8 @@ NapCat ◀──WebSocket── Bridge.send()  全局锁，间隔随机 2～3 �
 
 | 模块 | 职责 | 包内依赖 |
 | --- | --- | --- |
-| `bridge.py` | `main()` 入口与 `Bridge` 类：OneBot 收发、消息过滤、权限、命令、会话、调度 | 下面全部 |
+| `bridge.py` | `main()` 入口与 `Bridge` 类：OneBot 收发、命令、会话、调度及功能编排 | 消息策略、Agent、任务、工具、媒体等 |
+| `message_policy.py` | `Source` / `Incoming`、事件解析、主人判断、会话键及发言人标签；不访问 Bridge 状态 | `message_text`、`message_references`、`moderation` |
 | `codex_app.py` | `AppServer`：JSON-RPC 客户端、单轮对话事件处理；`progress_text` 生成进度文本、传递执行活动事件 | `agents.base`、`memory_progress` |
 | `agents/base.py` | `Agent`、`TurnRequest`、角色/权限常量和返回值上限；不负责 QQ 策略 | 无 |
 | `agents/codex.py` | `CodexAgent`：线程准备/恢复、状态查询、归档、模型目录与底层 turn 调用 | `agents.base`、`codex_app`、`models` |
@@ -41,14 +42,18 @@ NapCat ◀──WebSocket── Bridge.send()  全局锁，间隔随机 2～3 �
 | `agents/claude.py` | Claude JSONL、NONE/FRONT/FULL 启动、工具列表检查、回复校验、进程清理 | `agents.base` |
 | `agents/config.py` | profile 引用、权限模式、模型目录及阶段范围校验 | 无 |
 | `agents/state.py` | 模型偏好迁移与隔离、历史导入预算 | 无 |
-| `tool_server.py` | 每轮授权、Unix socket、工具 schema/执行、范围校验与真实回执 | `bridge`（运行时校验）、`memory` |
+| `tool_server.py` | 每轮授权、Unix socket、工具 schema/执行、范围校验与真实回执 | `message_policy`、`memory`、`voice` |
 | `diary_migration.py` | 离线一次性迁移固定日记来源，保留原件并校验冲突；不参与查询 | `memory`、标准库 |
 | `memory.py` | 在可信范围目录内做有预算的关键词检索，直接返回来源片段 | 标准库 |
 | `memory_progress.py` | 识别直接记忆查询，按真实 Codex 活动事件缓冲/释放进度 | 标准库 |
 | `front_tools.py` | 标准库 MCP stdio shim，经令牌转发工具调用 | 标准库 |
-| `tasks.py` | TaskManager：持久任务、接纳上限、后台执行、写锁、中断与保守重启善后 | `agents.base`、`prompts` |
-| `task_commands.py` | TaskCommands：会话锁、手动命令、可补发回报与共享 deliver | `tasks`、`agents.base`、`prompts` |
+| `tasks.py` | TaskManager：持久任务、接纳上限、后台执行、写锁、中断与保守重启善后 | `agents.base`、`prompts`、`message_policy` |
+| `task_commands.py` | TaskCommands：会话锁、手动命令、可补发回报与共享 deliver | `tasks`、`agents.base`、`prompts`、`message_policy` |
 | `prompts.py` | 公共权限/角色提示词与历史拼接；本轮记忆命令说明由 Bridge 补入 | `moderation` |
+| `message_text.py` / `message_references.py` | 消息文字与 @ 标签；引用、合并转发的受限展开 | `message_references` → `message_text` |
+| `front_switch.py` | 前台 profile 切换、配置备份、独立重启与结果通知 | `agents.config` |
+| `voice.py` | 合成进程协议、语音队列、音频校验 | `speech_normalize` |
+| `speech_normalize.py` / `speech_runtime.py` | 朗读文本清理；独立语音工具的授权调用客户端 | 标准库 |
 | `reply.py` | `BubbleStream`：把流式回复切成 QQ 气泡 | 无 |
 | `files.py` | 安全保存附件（不跟随符号链接、限制大小、不覆盖） | 无 |
 | `images.py` | 获取并校验图片（域名白名单、文件头识别格式） | `files` |
@@ -59,13 +64,25 @@ NapCat ◀──WebSocket── Bridge.send()  全局锁，间隔随机 2～3 �
 
 ## `bridge.py` 的结构
 
-- **模块级纯函数**：`incoming_text()` 把 OneBot 事件转成 `Incoming` 或丢弃；`owner_request()` 判断权限；`conversation_key()` 决定会话键；`speaker_message()` 生成发言人标签。这几个函数不涉及 I/O，可以直接测试。
+- **消息基础层**（`message_policy.py`）：`incoming_text()` 把 OneBot 事件转成 `Incoming` 或丢弃；`owner_request()` 判断权限；`image_request()` 判断图片接收范围；`conversation_key()` 决定会话键；`speaker_message()` 生成发言人标签。这些函数不涉及 I/O，可以直接测试。`bridge.py` 保留原名字的导入兼容；新代码直接从 `message_policy` 导入。任务和工具模块也直接引用基础层，不反向导入 `bridge`。
 - **`Bridge` 的方法**，按职责分组：
   - 存储：`__init__`（建表与迁移）、`remember_group`、`group_reference`
   - OneBot 收发：`send` / `_send`、`onebot_call`、`session`、`run`
   - 媒体：`receive_attachments`、`receive_images`
   - Agent 编排：`instructions`、`turn_request`、`thread_for`、`turn_text`、`run_turn`、`relay_progress`、`relay_answer`、`chat`
   - 调度：`worker`
+
+## 后续结构整理顺序
+
+本轮先拆出消息基础层，保持原有判断和事件格式。其余部分仍由 `Bridge` 编排，不把依赖注入的 Bridge 对象误认为模块之间已完全解耦。
+
+后续可按以下顺序逐步整理，每步独立验证：
+
+1. OneBot 传输：收发、调用回执、连接生命周期和发送限速；保留现有超时与重连行为。
+2. 会话存储：建表迁移、历史和群聊增量游标；先明确事务归属，再移动数据库访问。
+3. 命令处理：将模型、强度等命令与对话运行分开；继续以真实事件身份做权限判断。
+
+暂不为目录整齐批量移动文件，也不同时改写 worker、权限规则和数据库事务。现有离线测试使用 `python3 -m unittest discover -s tests -q`；涉及权限边界的改动须覆盖命令授权、消息策略、任务和工具授权测试。
 
 ## 权限模型
 

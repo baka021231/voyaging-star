@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 import time
 
+from .message_policy import Source, owner_request
 from .agents.base import TASK, FULL, TurnRequest, Interrupted, ExecutionUncertain
 from . import prompts
 
@@ -71,7 +72,6 @@ class TaskManager:
                 (self.writes(name) and any(writes for _, writes in rows)))
 
     async def dispatch(self, conversation, source, goal, agent=None):
-        from .bridge import owner_request
         if not owner_request(source, self.bridge.cfg['owner_qq']) or conversation != self.bridge.conversation(source):
             raise ValueError('任务操作仅限当前主人会话')
         name = agent or (self.back[0] if self.back else None)
@@ -113,7 +113,6 @@ class TaskManager:
                     await self.bridge.send(source, f'【#{ident} 进度】\n{text}')
 
     async def _run(self, ident):
-        from .bridge import Source
         row = self.get(ident)
         source = Source(**json.loads(row['source']))
         execution, progress_sender = None, None
@@ -233,7 +232,6 @@ class TaskManager:
         await asyncio.sleep(30)
         row = self.get(ident)
         if row['status'] == 'stopping':
-            from .bridge import Source
             with contextlib.suppress(Exception):
                 await self.bridge.send(Source(**json.loads(row['source'])), f'【任务#{ident}】停止尚未确认，继续等待；执行锁仍保留。')
 
