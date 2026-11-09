@@ -19,7 +19,7 @@
     "command": [
       "/home/<user>/.local/share/aemeath-voice/venv/bin/python",
       "-u",
-      "/path/to/qq-chat/tools/voice_backend.py",
+      "/path/to/voyaging-star/tools/voice_backend.py",
       "--model-dir",
       "/home/<user>/.local/share/aemeath-voice/model/ONNX_aimisiV2"
     ]
