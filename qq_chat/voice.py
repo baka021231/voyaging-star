@@ -6,6 +6,7 @@ Only this module knows its protocol; only the bridge knows QQ destinations.
 import asyncio
 import base64
 import contextlib
+import hashlib
 import io
 import json
 import logging
@@ -24,6 +25,11 @@ SPEAK_MIN_CHARS = 6
 # About 10 seconds: her voice reads 3-4 hanzi a second, slower in heavy styles.
 SPEAK_MAX_CHARS = 35
 SCENE_MAX_CHARS = 60
+
+
+def conversation_name(source):
+    """An opaque, stable name for the chat a line belongs to: no QQ number leaves the bridge."""
+    return f'{source.kind}-' + hashlib.sha256(f'{source.kind}:{source.target}'.encode()).hexdigest()[:8]
 
 
 def speech_text(text):
@@ -159,8 +165,13 @@ class ProcessSynthesizer:
 
 class VoiceReplies:
     """Bounded FIFO: speech never blocks text generation or message reception."""
-    def __init__(self, synthesizer, send_audio, send_notice, blocked, capacity=8, record=None):
-        """record(source, text, options, audio, metrics, sent) keeps each line for tuning; off when None."""
+    def __init__(self, synthesizer, send_audio, send_notice, blocked, capacity=8, record=None, conversation=None):
+        """record(source, text, options, audio, metrics, sent) keeps each line for tuning; off when None.
+
+        conversation(source) names the chat a spoken line belongs to, so a backend with
+        continuity can follow on from the last line said there; not sent when None.
+        """
+        self.conversation = conversation
         self.synthesizer = synthesizer
         self.send_audio, self.send_notice, self.blocked = send_audio, send_notice, blocked
         self.record = record
@@ -201,6 +212,8 @@ class VoiceReplies:
             if not isinstance(scene, str) or not scene.strip() or len(scene) > SCENE_MAX_CHARS:
                 raise ValueError(f'scene 应为 1～{SCENE_MAX_CHARS} 字，一句话说明想怎么说')
             options['scene'] = scene.strip()
+        if self.conversation is not None:
+            options['conversation'] = self.conversation(source)
         if self.blocked(source):
             return True
         return self._enqueue(source, text, options, fallback)

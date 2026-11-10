@@ -47,11 +47,12 @@ assert tuple(PRESETS) == STYLES and tuple(INTENSITY_SCALE) == INTENSITIES
 
 
 SCENE_MAX_CHARS = 60
+CONVERSATION = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
 
 
 def validate_request(request):
-    if not isinstance(request, dict) or set(request) - {'text', 'seed', 'style', 'intensity', 'scene'}:
-        raise ValueError('Expected text and optional seed, style, intensity and scene only')
+    if not isinstance(request, dict) or set(request) - {'text', 'seed', 'style', 'intensity', 'scene', 'conversation'}:
+        raise ValueError('Expected text and optional seed, style, intensity, scene and conversation only')
     text = request.get('text')
     seed = request.get('seed', 42)
     style = request.get('style', '日常')
@@ -66,7 +67,11 @@ def validate_request(request):
     if scene is not None and (not isinstance(scene, str) or not scene.strip()
                               or len(scene) > SCENE_MAX_CHARS or '\0' in scene):
         raise ValueError('Expected 1-60 scene characters')
-    return text, seed, style, intensity, scene
+    # An opaque name for the chat, so lines said minutes apart can follow one another.
+    conversation = request.get('conversation')
+    if conversation is not None and (not isinstance(conversation, str) or not CONVERSATION.match(conversation)):
+        raise ValueError('Expected an opaque conversation name')
+    return text, seed, style, intensity, scene, conversation
 
 
 def emotion_vector(style, intensity):
@@ -241,6 +246,73 @@ class SceneLibrary:
         return self.clips[best][1], chosen, score
 
 
+class Continuity:
+    """What each chat last sounded like, so the next line moves on from it instead of jumping.
+
+    A line's state is almost entirely its emotion vector (owner's listening, 2026-11-10): the
+    clip's rhythm and timbre matter far less. So every line keeps the clip picked for it, and
+    only its emotion is blended: SHARE of its own, the rest from the chat's running state.
+    The state is what was actually spoken, so each line takes one step from the last, and
+    older lines fade. After TTL seconds without a line the chat starts afresh.
+    """
+    SHARE, TTL, CHATS = 0.6, 600, 64
+
+    def __init__(self):
+        self.chats = {}
+
+    def previous(self, chat, now):
+        """(emotion vector, speaking level) of the chat's last line, or None when there is nothing to follow."""
+        state = self.chats.get(chat)
+        if state is None or now - state[2] > self.TTL:
+            self.chats.pop(chat, None)
+            return None
+        return state[:2]
+
+    def blend(self, own, previous):
+        return previous + self.SHARE * (own - previous)
+
+    def remember(self, chat, vector, level, now):
+        self.chats.pop(chat, None)
+        self.chats[chat] = (vector, level, now)
+        while len(self.chats) > self.CHATS:
+            self.chats.pop(next(iter(self.chats)))
+
+    def forget(self, chat):
+        self.chats.pop(chat, None)
+
+
+def wav_samples(data):
+    import numpy as np
+    with wave.open(io.BytesIO(data), 'rb') as audio:
+        return np.frombuffer(audio.readframes(audio.getnframes()), '<i2').astype(np.float64)
+
+
+def speaking_level(data):
+    """RMS of the spoken parts of a 32 kHz WAV: frames within 40 dB of the loudest, so pauses do not count."""
+    import numpy as np
+    audio = wav_samples(data)
+    frame = 320
+    count = len(audio) // frame
+    if not count:
+        return 0.0
+    rms = np.sqrt((audio[:count * frame].reshape(count, frame) ** 2).mean(axis=1)) + 1e-9
+    return float(np.sqrt((rms[20 * np.log10(rms / rms.max()) > -40] ** 2).mean()))
+
+
+def match_level(data, target):
+    """Bring a line to the speaking level of the line it follows; blended emotion shifts loudness by a few dB.
+
+    At most 6 dB either way and never into clipping. Returns (WAV, gain in dB).
+    """
+    import numpy as np
+    audio, level = wav_samples(data), speaking_level(data)
+    if level < 1 or target < 1:  # silence has no level to match
+        return data, 0.0
+    gain = min(2.0, max(0.5, target / level))
+    gain = min(gain, 32000 / max(1.0, float(np.abs(audio).max())))
+    return pcm_wav(32000, audio * gain), round(20 * math.log10(gain), 1)
+
+
 def pcm_wav(sample_rate, samples):
     """Convert IndexTTS's integer-amplitude audio without changing its pitch."""
     import numpy as np
@@ -269,7 +341,7 @@ def pcm_wav(sample_rate, samples):
 
 
 class IndexSynthesizer:
-    def __init__(self, package_dir, device, library=None, embedder=None):
+    def __init__(self, package_dir, device, library=None, embedder=None, continuity=False):
         os.environ.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1',
                           TOKENIZERS_PARALLELISM='false', OMP_NUM_THREADS='4')
         self.package = package_dir.resolve(strict=True)
@@ -320,10 +392,23 @@ class IndexSynthesizer:
         finally:
             infer_v2.load_checkpoint = native_loader
         patch_duration(infer_v2)
+        # The engine merges the emotion of its references here, once per line; this is where a
+        # line's emotion is read, and blended with the chat's previous state when it follows one.
+        self.carry = Continuity() if continuity else None
+        self.following = self.spoken = None
+        merge = self.engine.gpt.merge_emovec
+
+        def merged(*args, **kwargs):
+            vector = merge(*args, **kwargs)
+            if self.following is not None:
+                vector = self.carry.blend(vector, self.following)
+            self.spoken = vector
+            return vector
+        self.engine.gpt.merge_emovec = merged
         self.library = SceneLibrary(library, TextEmbedder(embedder)) if library else None  # list of folders
         self.load_seconds = time.perf_counter() - started
 
-    def synthesize(self, text, seed, style='日常', intensity='中', scene=None):
+    def synthesize(self, text, seed, style='日常', intensity='中', scene=None, conversation=None):
         random.seed(seed)
         self.np.random.seed(seed)
         self.torch.manual_seed(seed)
@@ -339,6 +424,17 @@ class IndexSynthesizer:
         if vector is not None:
             vector = self.engine.normalize_emo_vec(vector)
         self.engine.duration_factor = 1 / speed
+        # Only lines that imitate a clip in a light style follow one another. A heavy style is
+        # asked for on purpose and is spoken as picked; the chat starts afresh after it.
+        # A line without a clip (no scene, or nothing matched) neither follows nor is followed.
+        chat = conversation if self.carry and clip is not None else None
+        previous, now = None, time.monotonic()
+        if chat and style not in SceneLibrary.LIGHT_STYLES:
+            self.carry.forget(chat)
+            chat = None
+        if chat:
+            previous = self.carry.previous(chat, now)
+        self.following = previous[0] if previous else None
         started = time.perf_counter()
         with self.torch.inference_mode():
             result = self.engine.infer(
@@ -351,6 +447,13 @@ class IndexSynthesizer:
             raise ValueError('IndexTTS returned no audio')
         sample_rate, samples = result
         data = pcm_wav(sample_rate, cap_pauses(samples, sample_rate))
+        self.following, gain = None, None
+        if chat:
+            level = speaking_level(data)
+            if previous:
+                data, gain = match_level(data, previous[1])
+            # The whole run keeps the first line's level.
+            self.carry.remember(chat, self.spoken, previous[1] if previous else level, now)
         metrics = dict(model='aemeath-indextts-v5', provider=self.device,
                        load_seconds=self.load_seconds,
                        synthesis_seconds=time.perf_counter() - started,
@@ -358,7 +461,8 @@ class IndexSynthesizer:
                        seed=seed, style=style, intensity=intensity, speed=speed,
                        emotion_vector=vector, do_sample=True,
                        scene_reference=clip_id, scene_score=score,
-                       scene_candidates=self.library.candidates if scene and self.library else None)
+                       scene_candidates=self.library.candidates if scene and self.library else None,
+                       followed_previous=previous is not None, level_gain_db=gain)
         if self.device.startswith('cuda'):
             metrics['peak_gpu_allocated_mib'] = round(self.torch.cuda.max_memory_allocated() / 2 ** 20)
         return data, metrics
@@ -377,11 +481,12 @@ def serve(source, output, factory):
                 output.write(json.dumps(response) + '\n')
                 output.flush()
                 continue
-            text, seed, style, intensity, scene = validate_request(request)
+            text, seed, style, intensity, scene, conversation = validate_request(request)
             with contextlib.redirect_stdout(sys.stderr):
                 if engine is None:
                     engine = factory()
-                audio, metrics = engine.synthesize(text, seed, style, intensity, scene)
+                audio, metrics = engine.synthesize(text, seed, style, intensity, scene,
+                                                   **({'conversation': conversation} if conversation else {}))
             validate_wav(audio)
             response = {'wav': base64.b64encode(audio).decode('ascii'), 'metrics': metrics}
         except Exception as error:
@@ -399,11 +504,16 @@ def main():
     parser.add_argument('--library', type=Path, action='append',
                         help='scene clip library folder (index.json, index.npz, qc.json, wav/); repeatable')
     parser.add_argument('--embedder', type=Path, help='local bge-small-zh folder; required with --library')
+    parser.add_argument('--continuity', action='store_true',
+                        help='lines in the same chat within 10 minutes follow one another: each keeps its own '
+                             'clip, its emotion is blended with what was last spoken; needs --library')
     args = parser.parse_args()
     if bool(args.library) != bool(args.embedder):
         parser.error('--library and --embedder go together')
+    if args.continuity and not args.library:
+        parser.error('--continuity needs --library')
     serve(sys.stdin, sys.stdout,
-          lambda: IndexSynthesizer(args.package_dir, args.device, args.library, args.embedder))
+          lambda: IndexSynthesizer(args.package_dir, args.device, args.library, args.embedder, args.continuity))
 
 
 if __name__ == '__main__':
