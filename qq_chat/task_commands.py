@@ -78,7 +78,7 @@ class TaskCommands:
         spoken = self.__dict__.setdefault('_spoken_turns', set())
         spoke = key in spoken
         spoken.discard(key)
-        if self.group_voice_only(source):
+        if self.voice_only(source):
             # speak already voiced this turn; otherwise read the reply aloud in the default tone.
             if not spoke and not self.voice.submit_only(source, text):
                 await self.send(source, text)
