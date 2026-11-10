@@ -186,8 +186,8 @@ class ToolServer:
                 raise ValueError('当前发言者已被限制，语音没有发出')
             if guest_voice and self.speech_counts.get(token, 0) >= GUEST_SPEECHES:
                 raise ValueError(f'本轮群聊最多{GUEST_SPEECHES}段语音，请等待下一轮')
-            # Voice-only groups never see the text reply, so a failed line falls back to its own text.
-            fallback = arguments['text'] if self.bridge.group_voice_only(source) else None
+            # Voice-only chats omit the text reply; failed speech falls back to its own text.
+            fallback = arguments['text'] if self.bridge.voice_only(source) else None
             if not self.bridge.voice.say(source, arguments['text'], arguments['style'],
                                          arguments.get('intensity', '中'), arguments.get('scene'),
                                          fallback=fallback):

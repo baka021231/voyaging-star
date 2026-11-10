@@ -123,7 +123,9 @@ class GroupSpeakTests(unittest.IsolatedAsyncioTestCase):
         self.full_codex()
         self.enable_voice()
         self.cfg['voice']['group_voice_only'] = True
-        self.addAsyncCleanup(lambda: self.bridge.voice.close())
+        async def close_voice():
+            await self.bridge.voice.close()
+        self.addAsyncCleanup(close_voice)
         return server
 
     def speak_during_turn(self, server, arguments):

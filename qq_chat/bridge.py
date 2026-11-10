@@ -31,6 +31,7 @@ from .message_policy import (
 )
 from .moderation import BLOCK_SENDER, blocked_group_sender, bounded_guest_reply, obvious_abuse, update_blacklist
 from .voice import ProcessSynthesizer, VoiceReplies, validate_wav
+from .voice_mode import command as voice_mode_command, is_voice_command
 from .voice_log import VoiceLog
 
 from websockets.asyncio.client import connect
@@ -255,6 +256,15 @@ class Bridge(TaskCommands):
         return (source.kind == 'group' and getattr(self, 'voice', None) is not None
                 and (self.cfg.get('voice') or {}).get('group_voice_only', False) is True)
 
+    def voice_only(self, source):
+        return (self.group_voice_only(source)
+                or (source.kind == 'private' and owner_request(source, self.cfg['owner_qq'])
+                    and getattr(self, 'voice', None) is not None
+                    and (self.cfg.get('voice') or {}).get('private_voice_only', False) is True))
+
+    async def voice_command(self, source, text):
+        await voice_mode_command(self, source, text, BASE)
+
     async def enqueue_voice(self, source, reply):
         voice = getattr(self, 'voice', None)
         if voice is None or self.speak_enabled():
@@ -409,18 +419,22 @@ class Bridge(TaskCommands):
                                        '这是文字聊天限制的唯一例外；不允许其他命令、文件读取、私人记忆或后台任务。')
             request.instructions += speak_instructions
             request.runtime_instructions += '\n以下语音指令仅适用于当前轮。' + speak_instructions
-        if self.group_voice_only(source) and speak_granted:
-            request.runtime_instructions += ('\n当前群聊只发语音、不发文字，以下优先于上面“不必每轮都说”“照常写文字回复”：'
+        if self.voice_only(source) and speak_granted:
+            request.runtime_instructions += ('\n当前会话只发语音、不发文字，以下优先于上面“不必每轮都说”“照常写文字回复”：'
                                              '每轮都调用 speak 把这次的回复说出来，按此刻的情绪选 style 和 intensity，写好 scene；'
                                              '每段不超过35字（约10秒），话多就拆成几段依次调用，每段一个完整的意思，一轮最多四段。'
-                                             '最终正文写你说的话，它不会发到群里；没调用 speak 时程序才用默认语气念它，'
+                                             '最终正文写你说的话，它不会作为文字发送；没调用 speak 时程序才用默认语气念它，'
                                              '语音失败时发出原文。不到6个字的短句不用调用，直接写正文。'
                                              '不要另写“已排队”之类的语音发送说明。')
-        elif self.group_voice_only(source):
-            request.runtime_instructions += ('\n当前群聊使用自动语音回复：直接输出自然简短的回复正文，'
+        elif self.voice_only(source):
+            request.runtime_instructions += ('\n当前会话使用自动语音回复：直接输出自然简短的回复正文，'
                                              '程序会合成并发送语音，失败时发送原文。'
                                              '本轮不提供 speak 工具，不要调用历史 speak 工具或终端语音命令，'
                                              '不要另写“已排队”之类的语音发送说明。')
+        if source.kind == 'private' and authorized:
+            request.runtime_instructions += ('\n主人私聊支持仅语音模式。主人可发 /voice on 开启、/voice off 关闭、'
+                                             '/voice 查看状态，或直接发“切回文字”。开关即时生效并持久保存；'
+                                             '管理命令与语音失败兜底仍可发文字。')
         return request
 
     async def thread_for(self, source, authorized):
@@ -539,7 +553,7 @@ class Bridge(TaskCommands):
             if delta:
                 answer_queue.put_nowait(delta)
 
-        stream_text = authorized and not self.group_voice_only(source)
+        stream_text = authorized and not self.voice_only(source)
         reporter = asyncio.create_task(self.relay_progress(source, progress_queue)) if stream_text else None
         answer_sender = asyncio.create_task(self.relay_answer(source, answer_queue)) if stream_text else None
         selection = self.selection(source)
@@ -610,7 +624,7 @@ class Bridge(TaskCommands):
                 try:
                     async with self.front_execution(source, agent):
                         result = await self._chat(source, text, context_id, image_paths)
-                    if self.group_voice_only(source) and server.speech_counts.get(grant.token):
+                    if self.voice_only(source) and server.speech_counts.get(grant.token):
                         # Already said in her chosen tone; deliver() must not read the reply again.
                         self.__dict__.setdefault('_spoken_turns', set()).add(key)
                     return result
@@ -642,7 +656,7 @@ class Bridge(TaskCommands):
         self.db.commit()
         if authorized and request.history_text is not None:
             self._history_replies[key] = request.history_text
-        return reply, authorized and not self.group_voice_only(source)
+        return reply, request.on_answer is not None
 
     async def front_command(self, source, text):
         await switch_front_command(self, source, text, BASE,
@@ -658,6 +672,9 @@ class Bridge(TaskCommands):
                 await guard.__aenter__()
                 acquired = True
                 head = text.split(maxsplit=1)[0].casefold() if text.strip() else ''
+                if is_voice_command(text):
+                    await self.voice_command(source, text)
+                    continue
                 if head in ('/stop', '/tasks'):
                     await self.fast_command(source, text)
                     continue
@@ -757,7 +774,7 @@ class Bridge(TaskCommands):
                         continue
                     await self.send(source, '已加入群聊用户黑名单。' if parts[0] == '/block' else '已解除群聊用户拉黑。')
                 elif text == "/help":
-                    await self.send(source, "Aemeath：主人在私聊或群聊可请求Linux操作，其他人仅文字聊天；Windows文件只读。群聊可单独@机器人，或喊Aemeath、爱弥斯、ams、小爱（英文不分大小写）。图片识别向群友和主人开放，每条最多5张、每张20 MiB，支持PNG、JPEG、WebP、GIF。文件附件仅主人私聊接收。/ping、/help 所有人可用；/new 创建新会话、/session 查看会话ID、/models 查看可选模型、/model 查看当前模型、/model 模型名 切换、/model default 恢复默认、/front 查看前台、/front 配置名 切换主人前台并自动重启（所有主人会话生效，访客不变）、/effort 查看强度、/effort 档位 切换强度、/effort default 恢复模型默认强度、/task 完整目标 手动交给后台、/task check 编号 只查一次执行状态、/task release 编号 人工释放待确认任务、/tasks 查看当前会话任务、/stop 停前台、/stop 编号 停任务、/stop all 停本会话全部后台任务、/blacklist 查看群聊用户黑名单、/block QQ号 拉黑、/unblock QQ号 解除拉黑仅限主人。黑名单用户的群消息静默忽略。")
+                    await self.send(source, "Aemeath：主人在私聊或群聊可请求Linux操作，其他人仅文字聊天；Windows文件只读。群聊可单独@机器人，或喊Aemeath、爱弥斯、ams、小爱（英文不分大小写）。图片识别向群友和主人开放，每条最多5张、每张20 MiB，支持PNG、JPEG、WebP、GIF。文件附件仅主人私聊接收。/ping、/help 所有人可用；/voice on 开启主人私聊仅语音、/voice off 或“切回文字”关闭、/voice 查看状态；/new 创建新会话、/session 查看会话ID、/models 查看可选模型、/model 查看当前模型、/model 模型名 切换、/model default 恢复默认、/front 查看前台、/front 配置名 切换主人前台并自动重启（所有主人会话生效，访客不变）、/effort 查看强度、/effort 档位 切换强度、/effort default 恢复模型默认强度、/task 完整目标 手动交给后台、/task check 编号 只查一次执行状态、/task release 编号 人工释放待确认任务、/tasks 查看当前会话任务、/stop 停前台、/stop 编号 停任务、/stop all 停本会话全部后台任务、/blacklist 查看群聊用户黑名单、/block QQ号 拉黑、/unblock QQ号 解除拉黑仅限主人。黑名单用户的群消息静默忽略。")
                 elif len(text) > 6000:
                     await self.send(source, "这条消息较长，请拆成每条不超过6000字。")
                 else:
@@ -829,6 +846,11 @@ class Bridge(TaskCommands):
                         continue
                     incoming = replace(incoming, context_id=context_id)
                 head = incoming.text.split(maxsplit=1)[0].casefold() if incoming.text.strip() else ''
+                if is_voice_command(incoming.text):
+                    control = asyncio.create_task(self.voice_command(incoming.source, incoming.text))
+                    controls.add(control)
+                    control.add_done_callback(controls.discard)
+                    continue
                 if head == '/front':
                     control = asyncio.create_task(self.front_command(incoming.source, incoming.text))
                     controls.add(control)
