@@ -77,11 +77,14 @@ class ProcessSynthesizer:
         self.command, self.timeout = command, timeout
         self.process = None
         self.lock = asyncio.Lock()
+        # What the backend reported about the last line (style, chosen clip, runners-up); None if nothing.
+        self.metrics = None
 
     async def synthesize(self, text, **options):
         """options (style, intensity) are sent only when given, so text-only backends keep working."""
         request = {'text': text, **options}
         async with self.lock:
+            self.metrics = None
             try:
                 async with asyncio.timeout(self.timeout):
                     if self.process is None or self.process.returncode is not None:
@@ -97,6 +100,8 @@ class ProcessSynthesizer:
                     result = json.loads(line)
                     audio = base64.b64decode(result['wav'], validate=True)
                     validate_wav(audio)
+                    if isinstance(result.get('metrics'), dict):
+                        self.metrics = result['metrics']
                     return audio
             except BaseException:
                 await self.close()
@@ -141,9 +146,11 @@ class ProcessSynthesizer:
 
 class VoiceReplies:
     """Bounded FIFO: speech never blocks text generation or message reception."""
-    def __init__(self, synthesizer, send_audio, send_notice, blocked, capacity=8):
+    def __init__(self, synthesizer, send_audio, send_notice, blocked, capacity=8, record=None):
+        """record(source, text, options, audio, metrics, sent) keeps each line for tuning; off when None."""
         self.synthesizer = synthesizer
         self.send_audio, self.send_notice, self.blocked = send_audio, send_notice, blocked
+        self.record = record
         self.queue = asyncio.Queue(maxsize=capacity)
         self.task = None
         self.warming = None
@@ -202,9 +209,15 @@ class VoiceReplies:
                     if self.blocked(source):
                         break
                     audio = await self.synthesizer.synthesize(chunk, **options)
+                    metrics = getattr(self.synthesizer, 'metrics', None)
                     if self.blocked(source):
                         break
-                    await self.send_audio(source, audio)
+                    sent = False
+                    try:
+                        await self.send_audio(source, audio)
+                        sent = True
+                    finally:
+                        self._record(source, chunk, options, audio, metrics, sent)
             except Exception as error:
                 # No text/audio payloads, paths or backend errors in shared logs.
                 logging.warning('Voice reply failed (%s); text retained', type(error).__name__)
@@ -214,6 +227,13 @@ class VoiceReplies:
                                                else '本次语音未能完成，文字回复已保留。')
             finally:
                 self.queue.task_done()
+
+    def _record(self, *line):
+        if self.record is not None:
+            try:
+                self.record(*line)
+            except Exception as error:  # a full disk must not cost her the next line
+                logging.warning('Voice record failed (%s)', type(error).__name__)
 
     async def close(self):
         if self.warming:

@@ -197,6 +197,10 @@ class IndexAudioTests(unittest.TestCase):
             picks = [library.pick('哄', '话', style)[1] for style in ('日常', '开心', '安慰', '安慰')]
             # C is closest but fits no style; B gives way to D once used; A fits so much better it stays.
             self.assertEqual(picks, ['zh_vo_B', 'zh_vo_D', 'zh_vo_A', 'zh_vo_A'])
+            # The tuning record sees the ranking: A stayed ahead of the unlabeled D though both were just used.
+            self.assertEqual([(c['id'], c['recent']) for c in library.candidates],
+                             [('zh_vo_A', True), ('zh_vo_D', True)])
+            self.assertEqual(library.candidates[0]['score'], 1.0)  # the score before the penalty; C is not listed
             self.assertEqual(SceneLibrary([root], library.embed).recent, picks)
 
     def test_scene_library_rejects_vectors_from_another_embedder(self):
