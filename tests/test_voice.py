@@ -42,6 +42,45 @@ class SpeechTextTests(unittest.TestCase):
 
 
 class ProcessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_stderr_is_preserved_without_blocking_warmup_or_protocol(self):
+        encoded = base64.b64encode(wav_bytes()).decode()
+        script = ('import sys,json\n'
+                  'for line in sys.stdin:\n'
+                  ' request=json.loads(line)\n'
+                  ' sys.stderr.write("diagnostic:" + "x" * 200000 + "\\n"); sys.stderr.flush()\n'
+                  f' reply={{"ready":True}} if request.get("warmup") else {{"wav":{encoded!r}}}\n'
+                  ' print(json.dumps(reply),flush=True)\n')
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'private/backend.log'
+            backend = ProcessSynthesizer([sys.executable, '-u', '-c', script], timeout=5,
+                                         stderr_log=path)
+            try:
+                self.assertTrue(await backend.warm())
+                process = backend.process
+                self.assertEqual(await backend.synthesize('你好'), wav_bytes())
+                self.assertIs(backend.process, process)
+            finally:
+                await backend.close()
+            self.assertEqual(path.read_text().count('diagnostic:'), 2)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            # A restarted child appends rather than erasing earlier diagnostics.
+            try:
+                self.assertEqual(await backend.synthesize('再来一句'), wav_bytes())
+            finally:
+                await backend.close()
+            self.assertEqual(path.read_text().count('diagnostic:'), 3)
+
+    async def test_direct_synthesis_keeps_diagnostics_on_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'backend.log'
+            script = 'import sys; print("backend failure",file=sys.stderr,flush=True); print("{}",flush=True)'
+            backend = ProcessSynthesizer([sys.executable, '-u', '-c', script], timeout=5,
+                                         stderr_log=path)
+            with self.assertRaises(KeyError):
+                await backend.synthesize('失败')
+            self.assertIsNone(backend.process)
+            self.assertIn('backend failure', path.read_text())
+
     async def test_persistent_protocol_and_cleanup(self):
         encoded = base64.b64encode(wav_bytes()).decode()
         script = ('import sys,json\n'

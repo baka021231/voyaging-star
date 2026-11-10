@@ -9,7 +9,10 @@ import contextlib
 import io
 import json
 import logging
+import os
+from pathlib import Path
 import re
+import time
 import wave
 from .speech_normalize import normalize_for_speech
 
@@ -71,14 +74,30 @@ def validate_wav(data):
 
 class ProcessSynthesizer:
     """One request at a time. Kill on timeout to avoid stale response reuse."""
-    def __init__(self, command, timeout=120):
+    def __init__(self, command, timeout=120, *, stderr_log=None):
         if not isinstance(command, list) or not command or not all(isinstance(a, str) for a in command):
             raise ValueError('voice.command must be an argv list')
         self.command, self.timeout = command, timeout
+        self.stderr_log = (Path(stderr_log) if stderr_log is not None else
+                           Path(__file__).resolve().parents[1] / 'run/voice-backend.stderr.log')
         self.process = None
         self.lock = asyncio.Lock()
         # What the backend reported about the last line (style, chosen clip, runners-up); None if nothing.
         self.metrics = None
+
+    async def _start(self):
+        # Keep raw backend diagnostics local: they can include spoken text and paths.
+        # A file descriptor avoids a stderr pipe filling while we await stdout.
+        self.stderr_log.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        fd = os.open(self.stderr_log, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, 'ab', buffering=0) as log:
+            os.fchmod(log.fileno(), 0o600)
+            log.write(('\n--- Voice backend start ' + time.strftime('%Y-%m-%dT%H:%M:%S%z')
+                       + ' ---\n').encode())
+            return await asyncio.create_subprocess_exec(
+                *self.command, stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE, stderr=log,
+                limit=MAX_AUDIO_BYTES * 2)
 
     async def synthesize(self, text, **options):
         """options (style, intensity) are sent only when given, so text-only backends keep working."""
@@ -88,10 +107,7 @@ class ProcessSynthesizer:
             try:
                 async with asyncio.timeout(self.timeout):
                     if self.process is None or self.process.returncode is not None:
-                        self.process = await asyncio.create_subprocess_exec(
-                            *self.command, stdin=asyncio.subprocess.PIPE,
-                            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-                            limit=MAX_AUDIO_BYTES * 2)
+                        self.process = await self._start()
                     self.process.stdin.write((json.dumps(request, ensure_ascii=False) + '\n').encode())
                     await self.process.stdin.drain()
                     line = await self.process.stdout.readline()
@@ -117,10 +133,7 @@ class ProcessSynthesizer:
             try:
                 async with asyncio.timeout(self.timeout):
                     if self.process is None or self.process.returncode is not None:
-                        self.process = await asyncio.create_subprocess_exec(
-                            *self.command, stdin=asyncio.subprocess.PIPE,
-                            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-                            limit=MAX_AUDIO_BYTES * 2)
+                        self.process = await self._start()
                     self.process.stdin.write(b'{"warmup": true}\n')
                     await self.process.stdin.drain()
                     line = await self.process.stdout.readline()
