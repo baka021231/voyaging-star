@@ -150,8 +150,10 @@ class SceneLibrary:
     # and gratified"), so the requested style first narrows the clips to those
     # labeled for it, and the scene ranks only those.
     # A clip used in the last few picks steps aside for one nearly as close, so
-    # similar banter does not repeat the same clip line after line.
-    RECENT, RECENT_PENALTY = 6, 0.05
+    # similar banter does not repeat the same clip line after line. The penalty is
+    # about the usual gap between the two best clips (median 0.012 over 216 real
+    # calls): at 0.05 it overrode the ranking, and 29% of picks were not the best.
+    RECENT, RECENT_PENALTY = 6, 0.01
     CANDIDATES = 5
     # Light styles never borrow crying, anger or grim narration, whatever the scene says.
     LIGHT_STYLES = ('日常', '开心', '安慰')
