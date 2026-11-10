@@ -9,12 +9,13 @@ delete the folder.
   <folder>/audio/<id>.wav  what was sent
   <folder>/marks.jsonl   the owner's "this one sounded wrong" notes (tools/voice_log.py)
 """
-import hashlib
 import io
 import json
 from pathlib import Path
 import time
 import wave
+
+from .voice import conversation_name
 
 
 class VoiceLog:
@@ -32,12 +33,11 @@ class VoiceLog:
         with wave.open(io.BytesIO(audio), 'rb') as wav:
             seconds = round(wav.getnframes() / wav.getframerate(), 2)
         metrics = metrics if isinstance(metrics, dict) else {}
-        # Enough to tell "same conversation, 40 seconds later" without writing QQ numbers down.
-        chat = hashlib.sha256(f'{source.kind}:{source.target}'.encode()).hexdigest()[:8]
         row = {
             'id': ident,
             'time': time.strftime('%Y-%m-%dT%H:%M:%S%z', time.localtime(now)),
-            'conversation': f'{source.kind}-{chat}',
+            # Enough to tell "same conversation, 40 seconds later" without writing QQ numbers down.
+            'conversation': conversation_name(source),
             'text': text,
             'style': options.get('style'),
             'intensity': options.get('intensity'),
@@ -45,6 +45,9 @@ class VoiceLog:
             'reference': metrics.get('scene_reference'),
             'score': metrics.get('scene_score'),
             'candidates': metrics.get('scene_candidates'),
+            # Whether this line's emotion was blended with the chat's previous line, and its loudness correction.
+            'followed_previous': metrics.get('followed_previous'),
+            'level_gain_db': metrics.get('level_gain_db'),
             'speed': metrics.get('speed'),
             'emotion_vector': metrics.get('emotion_vector'),
             'seconds': seconds,

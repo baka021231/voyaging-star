@@ -11,7 +11,8 @@ from unittest.mock import patch
 import wave
 
 from qq_chat.bridge import Bridge, Incoming, Source
-from qq_chat.voice import ProcessSynthesizer, VoiceReplies, SPEAK_MAX_CHARS, speech_text, speech_chunks, validate_wav
+from qq_chat.voice import (ProcessSynthesizer, VoiceReplies, SPEAK_MAX_CHARS, conversation_name, speech_text,
+                            speech_chunks, validate_wav)
 
 
 def wav_bytes():
@@ -195,6 +196,31 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             ('第二句话发送会失败', {'style': '日常', 'intensity': '中'}, {'scene_reference': 'clip_第'}, False),
             ('第三句照常发出', {}, {'scene_reference': 'clip_第'}, True)])
         self.assertTrue(all(audio == wav_bytes() for _, _, _, audio, _, _ in kept))
+
+    async def test_spoken_lines_carry_an_opaque_chat_name_when_wired(self):
+        calls = []
+        class Backend:
+            async def synthesize(self, text, **options):
+                calls.append(options)
+                return wav_bytes()
+            async def close(self): pass
+        async def send(source, audio): pass
+        group, private = Source('group', 4455667788, 99), Source('private', 99, 99)
+        worker = VoiceReplies(Backend(), send, send, lambda s: False, conversation=conversation_name)
+        try:
+            worker.say(group, '第一句话说得长一点', '开心', '中', scene='得意')
+            worker.say(Source('group', 4455667788, 12345), '同一个群里另一个人', '日常', '中')
+            worker.say(private, '私聊里的一句话呀', '安慰', '低')
+            worker.submit(group, '自动朗读的不带名字')
+            await asyncio.wait_for(worker.queue.join(), 2)
+        finally:
+            await worker.close()
+        names = [c.get('conversation') for c in calls]
+        self.assertEqual(names[0], names[1])  # one chat, whoever she is answering
+        self.assertNotEqual(names[0], names[2])
+        self.assertIsNone(names[3])
+        self.assertRegex(names[0], r'^group-[0-9a-f]{8}$')
+        self.assertNotIn('4455667788', ''.join(names[:3]))
 
     async def test_blocked_while_synthesizing_is_never_sent(self):
         entered, release = asyncio.Event(), asyncio.Event()

@@ -30,7 +30,7 @@ from .message_policy import (
     speaker_message, incoming_text,
 )
 from .moderation import BLOCK_SENDER, blocked_group_sender, bounded_guest_reply, obvious_abuse, update_blacklist
-from .voice import ProcessSynthesizer, VoiceReplies, validate_wav
+from .voice import ProcessSynthesizer, VoiceReplies, conversation_name, validate_wav
 from .voice_mode import command as voice_mode_command, is_voice_command
 from .voice_log import VoiceLog
 
@@ -82,8 +82,9 @@ class Bridge(TaskCommands):
             self.voice = VoiceReplies(
                 ProcessSynthesizer(voice['command'], timeout=float(voice.get('timeout_seconds', 120))),
                 self.send_audio, self.send, self.blocked,
-                record=VoiceLog(voice['debug_log']) if voice.get('debug_log') else None)
-        self.db =sqlite3.connect(BASE / "chat.sqlite3")
+                record=VoiceLog(voice['debug_log']) if voice.get('debug_log') else None,
+                conversation=conversation_name)
+        self.db = sqlite3.connect(BASE / "chat.sqlite3")
         self.db.execute("CREATE TABLE IF NOT EXISTS seen (id TEXT PRIMARY KEY, time REAL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS history (role TEXT, content TEXT)")
         # Preserve pre-upgrade history exclusively for the owner's private chat.

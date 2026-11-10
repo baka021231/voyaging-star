@@ -6,8 +6,8 @@ from pathlib import Path
 import unittest
 import wave
 
-from tools.indextts_backend import (PRESETS, SceneLibrary, cap_pauses, emotion_vector, pcm_wav, serve,
-                                    validate_request)
+from tools.indextts_backend import (PRESETS, Continuity, SceneLibrary, cap_pauses, emotion_vector, match_level,
+                                    pcm_wav, serve, speaking_level, validate_request)
 import json as _json
 import tempfile
 from qq_chat.voice import validate_wav
@@ -42,9 +42,44 @@ class IndexProtocolTests(unittest.TestCase):
             serve(io.StringIO('\n'.join(json.dumps(r) for r in invalid)), output, factory)
         self.assertEqual([json.loads(l) for l in output.getvalue().splitlines()],
                          [{'error': 'synthesis_failed'}] * len(invalid))
-        self.assertEqual(validate_request({'text': '你好'}), ('你好', 42, '日常', '中', None))
-        self.assertEqual(validate_request({'text': '你好', 'style': '开心', 'intensity': '高', 'scene': '哄睡'}),
-                         ('你好', 42, '开心', '高', '哄睡'))
+        self.assertEqual(validate_request({'text': '你好'}), ('你好', 42, '日常', '中', None, None))
+        self.assertEqual(validate_request({'text': '你好', 'style': '开心', 'intensity': '高', 'scene': '哄睡',
+                                           'conversation': 'group-16604e41'}),
+                         ('你好', 42, '开心', '高', '哄睡', 'group-16604e41'))
+        for name in ('', 'group 1', '../x', 'a' * 65, 7):
+            with self.assertRaises(ValueError):
+                validate_request({'text': '你好', 'conversation': name})
+
+    def test_conversation_reaches_the_engine_only_when_given(self):
+        seen = []
+        class Engine:
+            def synthesize(self, text, seed, style, intensity, scene, **more):
+                seen.append(more)
+                return audio_bytes(), {}
+        source = '\n'.join(json.dumps(r) for r in [{'text': '第一句'}, {'text': '第二句', 'conversation': 'private-1a2b3c4d'}])
+        with contextlib.redirect_stderr(io.StringIO()):
+            serve(io.StringIO(source), io.StringIO(), Engine)
+        self.assertEqual(seen, [{}, {'conversation': 'private-1a2b3c4d'}])
+
+    def test_continuity_follows_the_last_line_until_the_chat_goes_quiet(self):
+        carry = Continuity()
+        self.assertIsNone(carry.previous('a', 0))
+        carry.remember('a', 10.0, 2000.0, 0)
+        self.assertEqual(carry.previous('a', 599), (10.0, 2000.0))
+        self.assertIsNone(carry.previous('b', 1))  # chats do not share a state
+        # 60% of the new line's own emotion, 40% of what was last spoken; each step starts from the last result.
+        second = carry.blend(20.0, 10.0)
+        self.assertAlmostEqual(second, 16.0)
+        carry.remember('a', second, 2000.0, 100)
+        self.assertAlmostEqual(carry.blend(0.0, carry.previous('a', 101)[0]), 6.4)
+        self.assertIsNone(carry.previous('a', 100 + Continuity.TTL + 1))  # quiet for over ten minutes: start afresh
+        carry.remember('a', 1.0, 1.0, 0)
+        carry.forget('a')
+        self.assertIsNone(carry.previous('a', 1))
+        for index in range(Continuity.CHATS + 5):
+            carry.remember(f'chat{index}', 0.0, 1.0, index)
+        self.assertEqual(len(carry.chats), Continuity.CHATS)
+        self.assertIsNone(carry.previous('chat0', Continuity.CHATS))  # the oldest chats were dropped
 
     def test_styles_map_to_fixed_references_and_scaled_vectors(self):
         for preset in PRESETS.values():
@@ -138,6 +173,24 @@ class IndexAudioTests(unittest.TestCase):
         self.assertTrue((result[-int(rate * 2.0):] == 0).all())  # trailing silence untouched
         short = np.concatenate([tone, gap(.8), tone])
         self.assertEqual(len(cap_pauses(short, rate)), len(short))
+
+    def test_following_line_is_brought_to_the_level_of_the_first(self):
+        rate = 32000
+        tone = lambda amplitude, seconds: amplitude * np.sin(2 * np.pi * 220 * np.arange(int(rate * seconds)) / rate)
+        gap = np.zeros(rate // 2)
+        loud = pcm_wav(rate, np.concatenate([tone(8000, 1), gap, tone(8000, 1)]))
+        quiet = pcm_wav(rate, np.concatenate([tone(4000, 1), gap, gap, tone(4000, 1)]))
+        # Pauses do not count: the quiet line is 6 dB below however long its silences are.
+        self.assertAlmostEqual(speaking_level(loud) / speaking_level(quiet), 2.0, places=2)
+        matched, gain = match_level(quiet, speaking_level(loud))
+        self.assertEqual(gain, 6.0)
+        self.assertAlmostEqual(speaking_level(matched) / speaking_level(loud), 1.0, places=2)
+        validate_wav(matched)
+        # Never more than 6 dB, never into clipping, and silence is left alone.
+        self.assertEqual(match_level(pcm_wav(rate, tone(500, 1)), speaking_level(loud))[1], 6.0)
+        self.assertLess(match_level(pcm_wav(rate, tone(30000, 1)), 10 * speaking_level(loud))[1], 1.0)
+        silent = pcm_wav(rate, np.zeros(rate))
+        self.assertEqual(match_level(silent, speaking_level(loud)), (silent, 0.0))
 
     def test_scene_library_picks_usable_matches_and_falls_back(self):
         with tempfile.TemporaryDirectory() as folder:
