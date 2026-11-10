@@ -152,6 +152,7 @@ class SceneLibrary:
     # A clip used in the last few picks steps aside for one nearly as close, so
     # similar banter does not repeat the same clip line after line.
     RECENT, RECENT_PENALTY = 6, 0.05
+    CANDIDATES = 5
     # Light styles never borrow crying, anger or grim narration, whatever the scene says.
     LIGHT_STYLES = ('日常', '开心', '安慰')
     # Imitate the closest clip even when none fits closely: the owner preferred that
@@ -189,6 +190,7 @@ class SceneLibrary:
         self.heavy = np.concatenate(heavy)
         self.fits = {name: np.array([name in labels for labels in styles], dtype=bool) for name in STYLES}
         self.recent = self.recent_picks()
+        self.candidates = []
 
     def check_embedder(self, folder, note, stored):
         """Vectors only compare within one model: re-embed one stored note to catch a
@@ -217,8 +219,13 @@ class SceneLibrary:
         if style in self.fits and self.fits[style].any():
             scores = self.np.where(self.fits[style], scores, -1.0)
         recent = self.np.array([ident in self.recent for ident in self.ids])
-        best = int(self.np.argmax(scores - self.RECENT_PENALTY * recent))
+        ranked = scores - self.RECENT_PENALTY * recent
+        best = int(self.np.argmax(ranked))
         score = round(float(scores[best]), 3)
+        # The runners-up, in the order they were ranked, for the opt-in tuning record:
+        # "was a better clip one step behind, or pushed back for being recent?"
+        self.candidates = [dict(id=self.ids[i], score=round(float(scores[i]), 3), recent=bool(recent[i]))
+                           for i in self.np.argsort(-ranked, kind='stable')[:self.CANDIDATES] if scores[i] > -1.0]
         chosen = self.ids[best] if score >= self.THRESHOLD else None
         if chosen is not None:
             self.recent = (self.recent + [chosen])[-self.RECENT:]
@@ -348,7 +355,8 @@ class IndexSynthesizer:
                        source_sample_rate=sample_rate, output_sample_rate=32000,
                        seed=seed, style=style, intensity=intensity, speed=speed,
                        emotion_vector=vector, do_sample=True,
-                       scene_reference=clip_id, scene_score=score)
+                       scene_reference=clip_id, scene_score=score,
+                       scene_candidates=self.library.candidates if scene and self.library else None)
         if self.device.startswith('cuda'):
             metrics['peak_gpu_allocated_mib'] = round(self.torch.cuda.max_memory_allocated() / 2 ** 20)
         return data, metrics

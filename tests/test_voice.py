@@ -59,6 +59,24 @@ class ProcessTests(unittest.IsolatedAsyncioTestCase):
             await backend.close()
         self.assertIsNotNone(process.returncode)
 
+    async def test_backend_metrics_are_kept_for_the_last_line_only(self):
+        encoded = base64.b64encode(wav_bytes()).decode()
+        script = ('import sys,json\n'
+                  'for line in sys.stdin:\n'
+                  ' text=json.loads(line)["text"]\n'
+                  f' reply={{"wav": {encoded!r}}}\n'
+                  ' if text=="有": reply["metrics"]={"scene_reference":"clip_1"}\n'
+                  ' print(json.dumps(reply),flush=True)\n')
+        backend = ProcessSynthesizer([sys.executable, '-u', '-c', script], timeout=5)
+        try:
+            self.assertIsNone(backend.metrics)
+            await backend.synthesize('有')
+            self.assertEqual(backend.metrics, {'scene_reference': 'clip_1'})
+            await backend.synthesize('无')  # a text-only backend reports nothing; no stale clip id
+            self.assertIsNone(backend.metrics)
+        finally:
+            await backend.close()
+
     async def test_timeout_kills_child_and_can_retry(self):
         backend = ProcessSynthesizer([sys.executable, '-c', 'import time; time.sleep(10)'], timeout=.05)
         with self.assertRaises(TimeoutError):
@@ -103,6 +121,41 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             await worker.close()
         self.assertTrue(backend.closed)
         self.assertIsNone(worker.task)
+
+    async def test_record_keeps_each_line_with_backend_metrics_and_never_blocks_speech(self):
+        kept, sent = [], []
+        class Backend:
+            metrics = None
+            async def synthesize(self, text, **options):
+                self.metrics = {'scene_reference': 'clip_' + text[0]}
+                return wav_bytes()
+            async def close(self): pass
+        async def send(source, audio):
+            if len(sent) == 1:
+                sent.append(None)
+                raise RuntimeError('QQ rejected')
+            sent.append(source)
+        async def notice(source, text): pass
+        def record(*line):
+            kept.append(line)
+            raise OSError('disk full')
+        source = Source('private', 123, 123)
+        worker = VoiceReplies(Backend(), send, notice, lambda s: False, record=record)
+        try:
+            with self.assertLogs(level='WARNING'):
+                worker.say(source, '第一句话说得长一点', '开心', '中', scene='得意')
+                worker.say(source, '第二句话发送会失败', '日常', '中')
+                worker.submit(source, '第三句照常发出')
+                await asyncio.wait_for(worker.queue.join(), 2)
+        finally:
+            await worker.close()
+        self.assertEqual(sent, [source, None, source])  # a failing record never stopped the next line
+        self.assertEqual([(text, options, metrics, ok) for _, text, options, _, metrics, ok in kept], [
+            ('第一句话说得长一点', {'style': '开心', 'intensity': '中', 'scene': '得意'},
+             {'scene_reference': 'clip_第'}, True),
+            ('第二句话发送会失败', {'style': '日常', 'intensity': '中'}, {'scene_reference': 'clip_第'}, False),
+            ('第三句照常发出', {}, {'scene_reference': 'clip_第'}, True)])
+        self.assertTrue(all(audio == wav_bytes() for _, _, _, audio, _, _ in kept))
 
     async def test_blocked_while_synthesizing_is_never_sent(self):
         entered, release = asyncio.Event(), asyncio.Event()
