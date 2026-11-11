@@ -335,3 +335,11 @@ class WarmupTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(calls, ['close'])
             finally:
                 bridge.db.close()
+
+
+class CurrentTimeTests(unittest.TestCase):
+    def test_time_line_is_local_and_readable(self):
+        from datetime import datetime, timezone, timedelta
+        from qq_chat.prompts import current_time
+        when = datetime(2026, 11, 12, 9, 5, tzinfo=timezone(timedelta(hours=11)))
+        self.assertTrue(current_time(when).startswith('现在是 2026年11月12日 星期四 09:05（本机时间）'))

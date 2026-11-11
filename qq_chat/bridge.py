@@ -436,6 +436,8 @@ class Bridge(TaskCommands):
             request.runtime_instructions += ('\n主人私聊支持仅语音模式。主人可发 /voice on 开启、/voice off 关闭、'
                                              '/voice 查看状态，或直接发“切回文字”。开关即时生效并持久保存；'
                                              '管理命令与语音失败兜底仍可发文字。')
+        # The bridge never told her the time, so in private turns she often ran `date` before speaking.
+        request.runtime_instructions = prompts.current_time() + '\n' + request.runtime_instructions
         return request
 
     async def thread_for(self, source, authorized):

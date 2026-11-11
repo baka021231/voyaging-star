@@ -253,17 +253,19 @@ class Continuity:
     clip's rhythm and timbre matter far less. So every line keeps the clip picked for it, and
     only its emotion is blended: SHARE of its own, the rest from the chat's running state.
     The state is what was actually spoken, so each line takes one step from the last, and
-    older lines fade. After TTL seconds without a line the chat starts afresh.
+    older lines fade. After `window` seconds without a line the chat starts afresh: the owner
+    chose one minute (2026-11-12), so a line said a while later is spoken as picked.
     """
-    SHARE, TTL, CHATS = 0.6, 600, 64
+    SHARE, WINDOW, CHATS = 0.6, 60, 64
 
-    def __init__(self):
+    def __init__(self, window=WINDOW):
         self.chats = {}
+        self.window = window
 
     def previous(self, chat, now):
         """(emotion vector, speaking level) of the chat's last line, or None when there is nothing to follow."""
         state = self.chats.get(chat)
-        if state is None or now - state[2] > self.TTL:
+        if state is None or now - state[2] > self.window:
             self.chats.pop(chat, None)
             return None
         return state[:2]
@@ -341,7 +343,7 @@ def pcm_wav(sample_rate, samples):
 
 
 class IndexSynthesizer:
-    def __init__(self, package_dir, device, library=None, embedder=None, continuity=False):
+    def __init__(self, package_dir, device, library=None, embedder=None, continuity=None):
         os.environ.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1',
                           TOKENIZERS_PARALLELISM='false', OMP_NUM_THREADS='4')
         self.package = package_dir.resolve(strict=True)
@@ -394,7 +396,8 @@ class IndexSynthesizer:
         patch_duration(infer_v2)
         # The engine merges the emotion of its references here, once per line; this is where a
         # line's emotion is read, and blended with the chat's previous state when it follows one.
-        self.carry = Continuity() if continuity else None
+        # continuity: seconds a chat's last line is followed for; None or 0 turns it off.
+        self.carry = Continuity(continuity) if continuity else None
         self.following = self.spoken = None
         merge = self.engine.gpt.merge_emovec
 
@@ -505,15 +508,20 @@ def main():
                         help='scene clip library folder (index.json, index.npz, qc.json, wav/); repeatable')
     parser.add_argument('--embedder', type=Path, help='local bge-small-zh folder; required with --library')
     parser.add_argument('--continuity', action='store_true',
-                        help='lines in the same chat within 10 minutes follow one another: each keeps its own '
-                             'clip, its emotion is blended with what was last spoken; needs --library')
+                        help='lines in the same chat follow one another: each keeps its own clip, its emotion '
+                             'is blended with what was last spoken; needs --library')
+    parser.add_argument('--continuity-window', type=float, default=Continuity.WINDOW, metavar='SECONDS',
+                        help='how long after a line the next one still follows it (default 60)')
     args = parser.parse_args()
     if bool(args.library) != bool(args.embedder):
         parser.error('--library and --embedder go together')
     if args.continuity and not args.library:
         parser.error('--continuity needs --library')
+    if not 0 < args.continuity_window <= 3600:
+        parser.error('--continuity-window must be 1-3600 seconds')
+    window = args.continuity_window if args.continuity else None
     serve(sys.stdin, sys.stdout,
-          lambda: IndexSynthesizer(args.package_dir, args.device, args.library, args.embedder, args.continuity))
+          lambda: IndexSynthesizer(args.package_dir, args.device, args.library, args.embedder, window))
 
 
 if __name__ == '__main__':
