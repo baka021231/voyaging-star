@@ -169,15 +169,12 @@ class MemoryToolTests(BridgeCase):
 
     async def test_full_turn_has_only_memory_command_and_revokes_after_turn(self):
         server = await self.setup_tools()
-        self.cfg['agents']['back'] = []
-        self.cfg['agents']['profiles']['front']['type'] = 'codex_app'
         await self.bridge.chat(self.owner, '回忆一下')
         req = self.front.requests[-1]
         self.assertIn('memory_search.py', req.instructions)
         self.assertIn('查询记忆默认静默', req.instructions)
         self.assertIsNotNone(req.on_activity)
         self.assertEqual(req.level, 'full')
-        self.assertIsNone(req.grant)  # Does not change the FULL provider tool policy.
         self.assertFalse(server.grants)
         await self.bridge.chat(self.guest, '回忆一下')
         self.assertNotIn('memory_search.py', self.front.requests[-1].instructions)
@@ -188,8 +185,6 @@ class MemoryToolTests(BridgeCase):
 
     async def test_consecutive_turns_use_fresh_grant_and_do_not_authorize_guest(self):
         server = await self.setup_tools()
-        self.cfg['agents']['back'] = []
-        self.cfg['agents']['profiles']['front']['type'] = 'codex_app'
         paths = []
         for _ in range(2):
             await self.bridge.chat(self.owner, '回忆一下')

@@ -27,7 +27,7 @@
 | `docs/FEATURES.md` | 功能说明：能做什么、限制、不支持的功能、已知问题 |
 | `docs/MEMORY.md` | 手动记忆检索：目录范围、授权、结果限制与验收边界 |
 | `docs/DECISIONS.md` | 项目级的决定记录：背景、方案、依据、谁拍板（语音的另见 VOICE-DECISIONS） |
-| `docs/FRONT-BACK.md` | 已放弃的前后台分离方案的设计和阶段记录（历史）；当前实现看 FEATURES/ARCHITECTURE |
+| `docs/FRONT-BACK.md` | 已放弃的前后台分离方案的设计和阶段记录（历史，代码已移除）；当前实现看 FEATURES/ARCHITECTURE |
 | `docs/VOICE.md` | 语音模块现状：一条语音怎么出来、开关、已知问题和待办 |
 | `docs/VOICE-DECISIONS.md` | 语音模块的决定记录：背景、方案、依据、谁拍板 |
 | `docs/VOICE-HISTORY.md` | 语音模块的安装、排查和实验历史（归档，不再更新） |
@@ -67,10 +67,9 @@
 | `group_user_blacklist` | 群聊用户 QQ 号列表，默认空；跨群静默忽略，动态拉黑会保存，主人豁免。主人用 `/blacklist` 查看、`/block QQ号` 添加、`/unblock QQ号` 解除 |
 | `show_tool_progress` | 是否推送普通工具调用摘要，默认 false；已识别的纯记忆命令摘要不显示 |
 | `memory.enabled` | 手动记忆检索开关，默认 true；false 禁止查询并不为 FULL 轮次发放记忆授权，详见 docs/MEMORY.md |
-| `voice` | 可选本地语音回复，默认关闭；`mode` 默认 `reply`，正常回复先发文字再补对应语音；`tool` 时改由主人单 agent 调用 `speak` 自己决定何时说、用什么风格。配置见 `docs/VOICE.md` |
-| `agents` | 可选 profile 配置；省略保持 Codex；back 可空或指定一个后台；Codex profile 省略 path 时继承 codex_path |
+| `voice` | 可选本地语音回复，默认关闭；`mode` 默认 `reply`，正常回复先发文字再补对应语音；`tool` 时改由她调用 `speak` 自己决定何时说、用什么风格。配置见 `docs/VOICE.md` |
+| `agents` | 可选 profile 配置；省略保持 Codex；Codex profile 省略 path 时继承 codex_path。`back` 已不支持，非空会在启动时报错 |
 | `agents.group_guest` | 可选普通群聊 profile；未设置时沿用 agents.guest。主人使用 front，白名单访客私聊使用 guest；不改变身份、权限或群聊触发条件 |
-| `tasks.progress` | 后台进度推送：direct（默认）或 silent。silent 仅关闭进度推送，仍保留固定派发回执及任务结果回报；不是完整的默认／详细工作模式切换 |
 
 不论哪种群设置，群聊都需要 @ 机器人或喊触发词才会回复。
 
@@ -82,7 +81,6 @@
 "agents": {
   "front": "claude",
   "guest": "claude-chat",
-  "back": [],
   "profiles": {
     "claude": {
       "type": "claude_code",
@@ -103,35 +101,13 @@
 }
 ```
 
-主人前台为 FULL，必须显式设置权限模式；`dontAsk` 会拒绝需要额外许可的操作，不能保证所有编码工具请求都能执行。访客无论 profile 怎么配置都为 NONE，safe-mode、禁用 CLAUDE.md/自动记忆及空工具校验共同生效，不取得主人的权限。FULL 不启用这些隔离开关，正常读取项目规则。
+主人为 FULL，必须显式设置权限模式；`dontAsk` 会拒绝需要额外许可的操作，不能保证所有编码工具请求都能执行。访客无论 profile 怎么配置都为 NONE，safe-mode、禁用 CLAUDE.md/自动记忆及空工具校验共同生效，不取得主人的权限。FULL 不启用这些隔离开关，正常读取项目规则。
 
 Claude 回复完整校验后才按气泡发出，因此没有即时首字；Codex 流式保留。`/models` 对 Claude 读取配置目录，model 项也可用对象形式声明 `defaultReasoningEffort` 和 `supportedReasoningEfforts`；未声明档位时 `/effort` 不允许切换，不从 CLI 通用列表推断模型支持情况。新 profile 不继承其他 profile 的模型名。更多边界见 `docs/FRONT-BACK.md` 和 `docs/ARCHITECTURE.md`。
 
-### 前后台分离配置（含 PR3 手动入口）
+### 前后台分离（已移除）
 
-> 这个模式 2026-10-28 已回退，本机不再使用，理由见 `docs/DECISIONS.md` 的 P01。下面的配置方法只作为代码仍支持的选项保留。
-
-在已有 profiles 中选择一个后台，增加以下配置（示例将 `codex` 作为后台；保留自己的 front/guest 选择）：
-
-```json
-{
-  "agents": {
-    "front": "claude",
-    "guest": "claude-guest",
-    "back": ["codex"],
-    "profiles": {
-      "claude": {"type": "claude_code", "path": "claude", "model": "sonnet", "models": ["sonnet"], "permission_mode": "dontAsk"},
-      "claude-guest": {"type": "claude_code", "path": "claude", "model": "haiku", "models": ["haiku"]},
-      "codex": {"type": "codex_app", "sandbox": "danger-full-access", "writes": true, "max_parallel": 1}
-    }
-  },
-  "tasks": {"max_running": 4, "max_writers": 1, "max_per_conversation": 3, "timeout_minutes": 60, "progress": "direct", "report_chars": 4000}
-}
-```
-
-配置与顶层 codex_path 等原配置合并；没有 agents 或 back 为空时维持单 agent 行为。当前只开放一个后台 profile；Claude 工具前台可通过 MCP 派发，Codex 前台仍使用 `/task 完整目标` 手动入口。后台看不到聊天记录，需要把要求写全。用 `/tasks` 查看当前会话任务、`/stop` 停前台、`/stop 编号` 或 `/stop all` 停后台。群任务可设置 tasks.progress=silent。
-
-重启后未开始的任务记为 interrupted，运行过的记为 orphaned 并通知；写 orphaned 持续占锁。自行确认旧执行确实结束后，在原会话用 `/task release 编号` 释放。不自动探测旧进程，不根据重启本身认定已停止。报告位于 workspace/tasks/编号.md，QQ 断线后可补发。
+前台聊天、后台干活的分离模式在 2026-10-28 回退，代码在 2026-11-13 移除，理由见 `docs/DECISIONS.md` 的 P01。配置里 `agents.back` 非空或沿用当时的示例会在启动时报错；`/task`、`/tasks` 命令不再存在。移除前的代码在 git 标签 `before-front-back-removal`。
 
 ## 引用与合并转发
 
@@ -143,8 +119,7 @@ Claude 回复完整校验后才按气泡发出，因此没有即时首字；Code
 只查 `workspace/memory/`：主人私聊可读 shared/private，群内主人可读
 shared/当前群目录；访客不取得检索授权。记忆文件属于本地私人数据，不提交仓库。
 
-FULL 单 agent 每轮由桥接提供带限时授权的命令入口；Claude FRONT 使用
-qq MCP。Codex 在开始每轮工作前单独注入当前授权命令，避免复用历史失效路径；原生 MCP 配置不变。单 agent Codex 只查记忆时默认静默，
+主人每轮由桥接提供带限时授权的命令入口。Codex 在开始每轮工作前单独注入当前授权命令，避免复用历史失效路径；原生 MCP 配置不变。Codex 只查记忆时默认静默，
 开始执行非记忆工作后恢复进度；Claude/Grok 的输出分流未做同样改造。
 
 检索不会自动保存新事实或每轮自动调用；日记正式目录统一为 memory/private/diary，直接检索，群聊不读取私人日记。按主题维护“当前有效偏好/决定”
@@ -212,18 +187,12 @@ python3 tools/restart_bridge.py
 
 桥接每轮按顺序读取 `workspace/SOUL.md`、`workspace/OWNER.md`，将存在的文件注入 developerInstructions；缺失文件跳过，不回退读取 AGENTS.md，也不自动创建或迁移文件。SOUL.md 对所有会话注入；OWNER.md 仅对桥接核验的主人私聊和群内主人会话注入，访客不会读取该文件。`workspace/AGENTS.md` 仅由 Codex 按工作目录原生加载，桥接不再手动注入。
 
-### Claude 工具前台（PR4）
+### 主人用 Grok
 
-完整示例见 `config.front-back.example.json`：主人前台 `claude_front` 使用 sonnet，访客 `claude_guest` 使用 haiku，后台 codex。合并现有私密配置并校验，主人确认部署后才重启；不要把示例的占位参数当真实登录信息。
-
-分离模式下 Claude 主人前台经 MCP 使用七个工具：派发、任务列表、状态、停止、追加要求、拍一拍当前主人，以及有范围限制的记忆检索；任务真实建立后桥接直接发编号回执。访客无工具。`/task` 手动入口保留，Codex 前台仍用手动入口。`/task check 编号` 只读查询一次、不自动放锁；确认结束后 `/task release 编号`。FRONT 本机隔离证据和启动耗时调查见设计第 14 节，两个性能实验开关未写入配置。
-
-### Grok 主人单 agent
-
-Grok Build 已登录后，可在 profiles 新增 `grok`，并设 front 为 grok、guest 仍为 claude_guest、back 为空：
+Grok Build 已登录后，可在 profiles 新增 `grok`，并设 front 为 grok、guest 仍为 claude_guest：
 
 ```json
 {"type":"grok_build","path":"/home/<user>/.local/bin/grok","model":"grok-4.7","models":["grok-4.7"],"permission_mode":"bypassPermissions","sandbox":"off","max_turns":100,"timeout_seconds":3600}
 ```
 
-该模式让主人前台直接读写文件和执行命令，权限范围与原 Codex 主人单 agent 相同；不赋予 root 或 Windows 写权限。模型与会话独立保存，/new、/model、/stop 保留；访客不可选择 Grok。本机已验证续接、每轮人设更新、图片与正在运行命令的停止。回复完整校验后再发送，不即时逐 token 输出。缺失会话不自动重试，必要时用 /new 重建。配置修改前备份，校验后按授权重启。
+该模式让 Grok 直接读写文件和执行命令，权限范围与主人用 Codex 时相同；不赋予 root 或 Windows 写权限。模型与会话独立保存，/new、/model、/stop 保留；访客不可选择 Grok。本机已验证续接、每轮人设更新、图片与正在运行命令的停止。回复完整校验后再发送，不即时逐 token 输出。缺失会话不自动重试，必要时用 /new 重建。配置修改前备份，校验后按授权重启。

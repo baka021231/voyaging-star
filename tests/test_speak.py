@@ -91,15 +91,11 @@ class SpeakToolTests(BridgeCase):
         self.cfg['voice'] = {'enabled': True, 'mode': 'tool'}
         self.bridge.voice = VoiceReplies(Synth(), send_audio, notice, self.bridge.blocked)
 
-    def full_codex(self):
-        self.cfg['agents']['back'] = []
-        self.cfg['agents']['profiles']['front']['type'] = 'codex_app'
-
     async def test_grant_lists_speak_only_when_granted_and_voices_the_bound_source(self):
         server = await self.setup_tools()
-        async with server.grant(self.owner) as grant:
+        async with server.grant(self.owner, names=('memory_search',)) as grant:
             names = {t['name'] for t in await server.call(self.token(grant), 'tools/list', {})}
-            self.assertNotIn('speak', names)  # Claude FRONT tool set is unchanged.
+            self.assertEqual(names, {'memory_search'})  # speak is listed only when granted
             with self.assertRaises(ValueError):
                 await server.call(self.token(grant), 'speak', {'text': LINE, 'style': '开心'})
         async with server.grant(self.group, names=('speak',)) as grant:
@@ -153,7 +149,6 @@ class SpeakToolTests(BridgeCase):
 
     async def test_full_owner_turn_gets_speak_command_only_in_tool_mode(self):
         server = await self.setup_tools()
-        self.full_codex()
         await self.bridge.chat(self.owner, '你好')
         self.assertNotIn('speak.py', self.front.requests[-1].instructions)
         self.enable_voice()
@@ -172,7 +167,6 @@ class SpeakToolTests(BridgeCase):
 
     async def test_group_guest_voice_is_scoped_and_revoked_when_disabled(self):
         server = await self.setup_tools()
-        self.full_codex()
         self.enable_voice()
         self.cfg['voice']['group_enabled'] = True
         guest = Source('group', 20001, 30001)
@@ -180,7 +174,7 @@ class SpeakToolTests(BridgeCase):
             token = self.token(grant)
             self.assertEqual([x['name'] for x in await server.call(token, 'tools/list', {})], ['speak'])
             await server.call(token, 'speak', {'text': LINE, 'style': '日常'})
-            for name in ('memory_search', 'dispatch_task', 'poke'):
+            for name in ('memory_search', 'dispatch_task', 'poke', 'shell'):
                 with self.assertRaises(ValueError):
                     await server.call(token, name, {})
             self.cfg['voice']['group_enabled'] = False

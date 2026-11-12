@@ -4,11 +4,11 @@
 
 ## 总览
 
-一个 asyncio 进程，用 WebSocket 连接 NapCat（OneBot 11），默认用 Unix socket 连接本机共享的 Codex App Server；也可按 profile 使用 Claude Code 或主人单 agent Grok 子进程。后台是否执行由 agents.back 决定，代码支持不等于所有部署都开启分离模式。
+一个 asyncio 进程，用 WebSocket 连接 NapCat（OneBot 11），默认用 Unix socket 连接本机共享的 Codex App Server；也可按 profile 使用 Claude Code 或主人单 agent Grok 子进程。聊天和干活是同一个 agent，一个会话同一时间只跑一轮；前后台分离的代码已在 2026-11-13 移除（见 `docs/DECISIONS.md` 的 P01）。
 
 ```
 NapCat ──WebSocket──▶ Bridge.session()  事件分发、过滤、去重、记录群聊
-                         ├ /stop、/tasks、/front → 控制协程（不排队）
+                         ├ /stop、/front、/voice → 控制协程（不排队）
                          │ queue（容量 8）
                          ▼
                       Bridge.worker()    命令、附件、图片、长度检查（单个 worker，逐条处理）
@@ -18,7 +18,6 @@ NapCat ──WebSocket──▶ Bridge.session()  事件分发、过滤、去重
                          ├ instructions()  prompts.py + workspace/SOUL.md + workspace/OWNER.md
                          ├ agent.prepare() 恢复或新建会话
                          ├ turn_text()     拼接旧历史、群聊上下文
-                         ├ /task → TaskManager → 后台 Agent → report_task()
                          └ run_turn()      agent.run(TurnRequest) → Codex AppServer / Claude 或 Grok JSONL
                                ├ 进度 → Codex memory 门控（适用时）→ relay_progress() ─┐
                                └ 回复 → relay_answer()  ──┤（BubbleStream 切分）
@@ -32,24 +31,21 @@ NapCat ◀──WebSocket── Bridge.send()  全局锁，间隔随机 2～3 �
 
 | 模块 | 职责 | 包内依赖 |
 | --- | --- | --- |
-| `bridge.py` | `main()` 入口与 `Bridge` 类：OneBot 收发、命令、会话、调度及功能编排 | 消息策略、Agent、任务、工具、媒体等 |
+| `bridge.py` | `main()` 入口与 `Bridge` 类：OneBot 收发、命令、会话、调度及功能编排 | 消息策略、Agent、轮次、工具、媒体等 |
 | `message_policy.py` | `Source` / `Incoming`、事件解析、主人判断、会话键及发言人标签；不访问 Bridge 状态 | `message_text`、`message_references`、`moderation` |
 | `codex_app.py` | `AppServer`：JSON-RPC 客户端、单轮对话事件处理；`progress_text` 生成进度文本、传递执行活动事件 | `agents.base`、`memory_progress` |
-| `agents/base.py` | `Agent`、`TurnRequest`、角色/权限常量和返回值上限；不负责 QQ 策略 | 无 |
+| `agents/base.py` | `Agent`、`TurnRequest`、权限级别常量和返回值上限；不负责 QQ 策略 | 无 |
 | `agents/codex.py` | `CodexAgent`：线程准备/恢复、状态查询、归档、模型目录与底层 turn 调用 | `agents.base`、`codex_app`、`models` |
 | `agents/__init__.py` | 构建 Codex/Claude/Grok profile，Codex profile 共用 transport | `agents.codex`、`agents.claude`、`agents.grok`、`agents.config` |
-| `agents/grok.py` | 主人单 agent Grok JSONL、私有 ACP 输入、会话/模型/中断；仅 CHAT/FULL | `agents.base`、`agents.claude`（MIME 与进程清理工具）、`prompts` |
-| `agents/claude.py` | Claude JSONL、NONE/FRONT/FULL 启动、工具列表检查、回复校验、进程清理 | `agents.base` |
+| `agents/grok.py` | 主人用的 Grok JSONL、私有 ACP 输入、会话/模型/中断；仅 FULL | `agents.base`、`agents.claude`（MIME 与进程清理工具）、`prompts` |
+| `agents/claude.py` | Claude JSONL、NONE/FULL 启动、工具列表检查、回复校验、进程清理 | `agents.base` |
 | `agents/config.py` | profile 引用、权限模式、模型目录及阶段范围校验 | 无 |
 | `agents/state.py` | 模型偏好迁移与隔离、历史导入预算 | 无 |
-| `tool_server.py` | 每轮授权、Unix socket、工具 schema/执行、范围校验与真实回执 | `message_policy`、`memory`、`voice` |
+| `tool_server.py` | 每轮授权、Unix socket、speak 与 memory_search 的 schema/执行和范围校验 | `message_policy`、`memory`、`voice` |
 | `diary_migration.py` | 离线一次性迁移固定日记来源，保留原件并校验冲突；不参与查询 | `memory`、标准库 |
 | `memory.py` | 在可信范围目录内做有预算的关键词检索，直接返回来源片段 | 标准库 |
 | `memory_progress.py` | 识别直接记忆查询，按真实 Codex 活动事件缓冲/释放进度 | 标准库 |
-| `front_tools.py` | 标准库 MCP stdio shim，经令牌转发工具调用 | 标准库 |
-| `tasks.py` | TaskManager：持久任务、接纳上限、后台执行、写锁、中断与保守重启善后 | `agents.base`、`prompts`、`message_policy` |
-| `turns.py` | `Turns`：会话锁、`/stop` 停当前轮、把回复发出去并写入历史的 `deliver`；每条消息都经过 | `agents.base` |
-| `task_commands.py` | TaskCommands：后台任务的手动命令与可补发回报（本机未启用，见 `docs/DECISIONS.md` P01） | `turns`、`tasks`、`agents.base`、`prompts`、`message_policy` |
+| `turns.py` | `Turns`（`Bridge` 的基类）：会话锁、`/stop` 停当前轮、把回复发出去并写入历史的 `deliver`；每条消息都经过 | `agents.base`、`message_policy` |
 | `prompts.py` | 公共权限/角色提示词与历史拼接；本轮记忆命令说明由 Bridge 补入 | `moderation` |
 | `message_text.py` / `message_references.py` | 消息文字与 @ 标签；引用、合并转发的受限展开 | `message_references` → `message_text` |
 | `front_switch.py` | `/front`：换主人用哪个 agent，备份配置、独立重启并通知结果 | `agents.config`、`config_file` |
@@ -84,13 +80,13 @@ NapCat ◀──WebSocket── Bridge.send()  全局锁，间隔随机 2～3 �
 2. 会话存储：建表迁移、历史和群聊增量游标；先明确事务归属，再移动数据库访问。
 3. 命令处理：将模型、强度等命令与对话运行分开；继续以真实事件身份做权限判断。
 
-暂不为目录整齐批量移动文件，也不同时改写 worker、权限规则和数据库事务。现有离线测试使用 `python3 -m unittest discover -s tests -q`；涉及权限边界的改动须覆盖命令授权、消息策略、任务和工具授权测试。
+暂不为目录整齐批量移动文件，也不同时改写 worker、权限规则和数据库事务。现有离线测试使用 `python3 -m unittest discover -s tests -q`；涉及权限边界的改动须覆盖命令授权、消息策略、轮次和工具授权测试。
 
 ## 权限模型
 
 所有权限都来自 `owner_request(source, owner)`，它只比较数字 QQ 号。结果决定三件事：
 
-1. 请求的权限级别：单 agent 主人 `FULL`，分离模式 Claude 主人前台 `FRONT`、Codex 主人前台 `NONE`（手动分派）；访客及回报轮次 `NONE`；`CodexAgent.prepare()` 维持原 sandbox：`danger-full-access` 或 `read-only`
+1. 请求的权限级别：主人 `FULL`，访客 `NONE`；`CodexAgent.prepare()` 维持原 sandbox：`danger-full-access` 或 `read-only`
 2. 使用哪套指令：`prompts.OWNER` 或 `prompts.GUEST`（`prompts.instructions`）
 3. 能否使用管理命令、发图片和附件（`worker`、`receive_*`、`incoming_text`）
 
@@ -123,8 +119,7 @@ NapCat ◀──WebSocket── Bridge.send()  全局锁，间隔随机 2～3 �
 
 | 表 | 用途 |
 | --- | --- |
-| `tasks` | 任务来源、目标、执行与回报状态；writes 冻结，orphaned 写任务继续占锁；receipt_sent 记录真实回执 |
-| `task_inputs` | 运行任务的追加要求，下一轮消费标记；重启后不自动执行 |
+| `tasks` / `task_inputs` | 已移除的后台任务留下的历史数据（32 条任务），代码不再读写，新数据库里也不会创建 |
 | `seen` | 已处理的消息 ID，保留 7 天 |
 | `threads` | 会话键 → Codex 线程 ID |
 | `conversation_models` | 旧 Codex 偏好的兼容表，迁移后仍同步默认 Codex 的选择 |
@@ -147,13 +142,13 @@ NapCat ◀──WebSocket── Bridge.send()  全局锁，间隔随机 2～3 �
 
 ## 常见改动
 
-当前边界：`Bridge.agents` 持有各 profile，`Bridge.agent` 是主人前台便捷入口，`agent_for(source)` 按真实身份选择前台或访客 profile；Bridge 不再依赖 `self.app`。`TurnRequest` 的 `role=CHAT/TASK`、`level=FULL/FRONT/NONE`、人设全文和模型选择由 Bridge 组装。先 `prepare(req)` 得到线程，再拼接旧历史与群聊上下文，最后通过 `run(req)` 执行。请求额外包含 `session_id`（已准备的线程）、`show_tools`（进度显示开关）及 `on_activity`（Codex 执行活动回调），避免 run 再次恢复线程或重复读取人设。
+当前边界：`Bridge.agents` 持有各 profile，`Bridge.agent` 是主人前台便捷入口，`agent_for(source)` 按真实身份选择前台或访客 profile；Bridge 不再依赖 `self.app`。`TurnRequest` 的 `level=FULL/NONE`、人设全文和模型选择由 Bridge 组装。先 `prepare(req)` 得到线程，再拼接旧历史与群聊上下文，最后通过 `run(req)` 执行。请求额外包含 `session_id`（已准备的线程）、`show_tools`（进度显示开关）及 `on_activity`（Codex 执行活动回调），避免 run 再次恢复线程或重复读取人设。
 
 `session_id(key)` 只查已有映射，供 `/session` 使用；`model_state(thread)` 提供接口返回的实际模型与强度；`models()` 和 `default_model()` 封装原模型目录及临时线程解析。`reset(key)` 仅在当前数据库事务中归档、移除当前 profile 的会话映射，Bridge 继续清除 history 并统一提交，模型选择不清除。适配器借用 Bridge 的数据库，不负责关闭它。
 
-当前支持 back 为空的单 agent，或一个后台 profile（分离模式 10-28 已回退，本机 back 为空，见 [DECISIONS](DECISIONS.md) 的 P01）；分离模式与工具通道见下文 PR3/PR4。PR2 当时仅允许空 back，是历史阶段限制，不是现行校验规则。`AppServer.turn()` 的事件处理、前缀一致性及异常语义保留，Codex 返回上限仍在适配器。新会话历史统一由 `recent_history()` 从最近 20 条向前取，每条截到 1000 字，JSON 序列化后不超过 8000 字，再恢复时间顺序；数据库原记录不截断。
+只支持单 agent；配置里 `agents.back` 非空会在启动时报错（见 [DECISIONS](DECISIONS.md) 的 P01）。`AppServer.turn()` 的事件处理、前缀一致性及异常语义保留，Codex 返回上限仍在适配器。新会话历史统一由 `recent_history()` 从最近 20 条向前取，每条截到 1000 字，JSON 序列化后不超过 8000 字，再恢复时间顺序；数据库原记录不截断。
 
-Claude NONE 在桥接的 `run/claude/<profile>/` 空目录运行，safe-mode 加两个禁用记忆变量，不携带 MCP；FULL 使用实际 workspace 工作目录，正常加载项目规则，不添加隔离开关。人设写入 600 权限临时提示文件，NONE 替换系统提示、FULL 追加；每轮 snapshot=off，结束删除文件。子进程以新进程组启动，stdout 上限 16 MiB、stderr 并行排空，异常或取消依次 SIGINT/SIGTERM/KILL 清理；同一会话由适配器锁串行运行。显式停止与保守重启恢复已经实现，见下文后台调度章节。
+Claude NONE 在桥接的 `run/claude/<profile>/` 空目录运行，safe-mode 加两个禁用记忆变量，不携带 MCP；FULL 使用实际 workspace 工作目录，正常加载项目规则，不添加隔离开关。人设写入 600 权限临时提示文件，NONE 替换系统提示、FULL 追加；每轮 snapshot=off，结束删除文件。子进程以新进程组启动，stdout 上限 16 MiB、stderr 并行排空，异常或取消依次 SIGINT/SIGTERM/KILL 清理；同一会话由适配器锁串行运行。显式停止见下文“会话锁与停止”。
 
 Claude 工具列表未校验通过前不接受回复；完整聚合顶层 assistant 文本，忽略子 agent 文本和 thinking，检查 `<invoke` / `<system-reminder` 等标记后才回放到气泡回调。`result` 失败、缺失、异常退出或可疑标记均不发缓冲文字。`TurnRequest.history_text` 承载验证后的全文，Bridge 仅为主人正常成功回复暂存该值、在 worker 落库时取出；访客仍保存实际发送的受限文本。模型返回值上限与全文历史是两个不同用途。
 
@@ -191,41 +186,29 @@ python3 -m unittest discover -s tests -v
 
 `/effort` 查询当前模型、强度和支持档位；`/effort 档位` 设置；`/effort default` 恢复当前模型目录默认强度。Codex 按实时目录、Claude 按配置目录校验，不支持的档位或查询失败不更改原设置。按会话和 profile 存入 `profile_models`，旧 Codex 表保留兼容，下一条消息生效，重启和 `/new` 保留，只影响当前主人会话。未选择模型时首次设置会固定当前会话模型；再次 `/model` 切换会重置为所选模型默认强度。
 
-## PR3：后台调度与回报
+## 会话锁与停止
 
-`Bridge` 继承 `TaskCommands`，构造时创建 `TaskManager`。前台仍由一个 worker 串行消费容量 8 的队列；session 对主人 `/stop`、`/tasks` 直接创建控制协程，非主人静默。后台 runner 属于 TaskManager，不随 QQ session 断开而取消。`back: []` 不创建后台执行。
+`Bridge` 继承 `turns.Turns`。会话锁按 conversation key 建立，对同一 asyncio task 可重入；chat、模型/强度命令、/new 均持锁，worker 持锁直到交付和历史落库，所以同一个会话里的两轮不会并发操作同一线程。
 
-每个任务以 `task:编号` 为执行键，使用 TASK/FULL、WORKER、自足目标、profile 默认模型，不携带 SOUL/OWNER 或聊天历史。Codex task 用独立持久线程，仅内存映射和 tasks.session_id，不覆盖 threads 中的聊天映射。配置只开放一个后台且并发为 1，多后台放到 PR5。
+`/stop` 由 `Bridge.session()` 直接创建控制协程，不排队、不取会话锁，非主人静默。它请求当前 agent 中断这个会话正在跑的那一轮（`front_execution` 记录谁在跑）。中断请求送达不等于停止成功：最终按执行端的结果回报“已确认停止”“停止前已完成”或“停止前已失败”；30 秒未确认会提醒，轮次不提前释放。
 
-调度用 Condition 检查 tasks 中 running/stopping/orphaned 的 profile 及持久 writes 占用，再原子标记 running。各 profile 占用和全局写占用同时满足才执行。接纳上限同时计入 queued，容量满立即拒绝。正常完成、已确认失败/中断释放容量；超时先请求中断再等待实际结局，RPC 报错回 running；Codex 连接失去或其他无法确认的执行保守进入 orphaned。
+`deliver` 是回复的唯一出口：按是否仅语音决定发文字还是念出来，再把问答写入 `history`。
 
-重启恢复仅执行数据库状态转换：queued → interrupted，running/stopping → orphaned，不访问旧线程或进程、不发信号、不轮询。写 orphaned 占用按创建时的 writes 判定，防止改配置绕过锁；只有原会话 `/task release` 在主人确认后可释放。旧 runtime_ref 自动核对方案保留在 FRONT-BACK 第 13 节，不在当前代码中。
+## 每轮工具授权
 
-会话锁按 conversation key 建立，对同一 asyncio task 可重入；chat、模型/强度命令、/new、回报均持锁，worker 持锁直到交付和历史落库。前台与回报不会并发操作同一线程。控制命令和后台调度不取会话锁。
+tool_server 绑定 run/tools.sock，目录 700、socket 600，拒绝替换普通文件或活 socket。`Bridge.chat` 每轮生成 ToolGrant：主人按配置取得 memory_search（memory 启用）和 speak（voice.mode=tool 且语音已启用）；开放群聊语音时群友只取得 speak。主人走命令入口（`tools/speak.py`、`tools/memory_search.py`），群聊访客的 Codex 走原生工具。grant 的工具名单写在 ToolGrant.names，turn_request 只为名单内的工具注入说明。工具服务在启用 memory 或 speak 时启动。
 
-回报还有独立的 task id 锁，避免完成与重连补报同时重复生成/发送。先在会话锁内用前台 CHAT/NONE 生成非流式文字并持久化 report_text；失败使用真实状态的降级摘要；orphaned 始终由桥接固定警告。再由 deliver 走原发送/语音/历史路径，所有 OneBot 气泡确认成功才记 reported=1；已有文字补发不调用模型。/new 不取消任务，回报时重新取当前线程；系统回报首行先于历史参考，防止被导入包装遮住。部分气泡成功后断线可能补发重复，采用至少一次交付。
-
-PR4 前置小修复：TaskManager.check 按原会话校验，再调用 CodexAgent.check_execution，只发一次 thread/read(includeTurns=true)，10 秒超时不重试。PR3 每个任务仅一轮；缺少精确 turn_id 且返回多轮时未知，不误判其他轮次。查询不改变状态或锁。orphaned 固定通知说明 check、终端核实及人工 release。排队取消直接说明未执行。
-
-## PR4：前台工具授权
-
-tool_server 绑定 run/tools.sock，目录 700、socket 600，拒绝替换普通文件或活 socket。Bridge.chat 对已核验主人分两路生成逐轮 ToolGrant：back 非空的 Claude FRONT 可用完整七工具；back 为空的 FULL 主人按配置取得 memory_search（memory 启用）和 speak（voice.mode=tool 且语音已启用）授权，均通过命令入口，不改变内置工具集；grant 的工具名单写在 ToolGrant.names，turn_request 只为名单内的工具注入命令。speak 不在 Claude FRONT 的七工具集合内。工具服务在配置后台、启用 memory 或启用 speak 时启动；MCP 配置包含 socket 和随机令牌，权限 600，令牌绑定 Source/会话并限时，finally 撤销。工具请求独立协程处理，不取会话锁，避免前台 await agent.run 时死锁。访客、报告轮次不取得 grant。
-
-Claude FRONT 不加 safe-mode，设置两个禁用记忆环境变量、空 cwd、空内置工具、显式 MCP 和 dontAsk；init.tools 精确等于 FRONT_TOOLS，工具缺失和多出都失败，运行中也检查白名单。CHAT 全轮缓冲检查伪调用及固定回执标记后才交付。NONE/FULL 原规则保留；本机版本隔离证据见 FRONT-BACK 14 节，不由 tools 为空推断 hooks 或插件关闭。
-
-shim 用 python -I 的绝对路径启动，不导入包；tools/list 向桥接取动态后台枚举与 schema。动作参数不接受来源、QQ 或会话字段，来源只认令牌。任务工具仅查当前会话，返回有长度限制的摘要；poke 根据绑定 Source 调用本机 NapCat send_poke，不能指定第三人。任务/动作日志记录工具名、来源类型及结局，不记录授权串或任意正文；memory_search 直接走只读检索，不记录查询及结果正文。
-
-创建任务与 receipt_sent=0 同步落库，桥接发送真实回执并确认后置 1，失败不丢任务，工具仍返回真实编号和 pending 回执状态；重连先补回执。旧任务迁移默认 1。send_to_task 写 task_inputs，任务完成一轮后在原 profile/写占用下续接同一 session，使用创建时的总执行期限。Codex 启动每轮时记录 runtime_ref；人工 check 使用精确 turn_id，防止续轮后拿别的轮次推断。
+授权文件包含 socket 和随机令牌，权限 600，令牌绑定 Source/会话并限时，finally 撤销。文件里 `mcpServers.qq.env` 这层嵌套是它早先兼作 MCP 配置时留下的形状，两个命令行入口按它读取；要改就两头在同一次部署里一起改。工具请求由独立协程处理，不取会话锁，避免 await agent.run 时死锁。参数不接受来源、QQ 或会话字段，来源只认令牌。日志只记工具名、来源类型及结局，不记令牌或正文。
 
 ## Grok 单 agent 接入
 
-主人明确选择与当前 Codex 相同的操作权限、关闭后台的最简模式。配置类型为 grok_build，仅准用于 owner front；guest 不可引用，back 不可包含 Grok，Grok 前台时 back 必须为空。每个 profile 明确 permission_mode=bypassPermissions 和 sandbox=off，避免配置名义与实际命令不一致；Bridge 的身份校验不改，访客仍使用既有 Claude NONE。
+主人明确选择与当前 Codex 相同的操作权限。配置类型为 grok_build，仅准用于 owner front；guest 不可引用。每个 profile 明确 permission_mode=bypassPermissions 和 sandbox=off，避免配置名义与实际命令不一致；Bridge 的身份校验不改，访客仍使用既有 Claude NONE。
 
-GrokAgent 使用现有 agent_sessions/old_agent_sessions/profile_models 存储，旧 Codex 迁移身份不变。每轮 `--session-id` 或 `--resume`，输出 streaming-messages-json，关闭子 agent 自动派生。启动校验 session、权限模式、核心文件/终端工具，以及不加载 qq 派单工具；不支持 NONE/FRONT/TASK 的请求在启动前拒绝。
+GrokAgent 使用现有 agent_sessions/old_agent_sessions/profile_models 存储，旧 Codex 迁移身份不变。每轮 `--session-id` 或 `--resume`，输出 streaming-messages-json，关闭子 agent 自动派生。启动校验 session、权限模式和核心文件/终端工具；NONE 级别的请求在启动前拒绝。
 
 Grok 续接时会缓存首次系统规则，单纯更换 --agent 文件未能刷新旧人设。因此命令行只传恒定公开 BRIDGE_RULES；动态 SOUL/OWNER、工作台规则、用户输入和图片内容块每轮存入 600 权限 prompt JSON，CLI --prompt-file 读入，finally 删除。每轮公开系统约定采用 current_bridge_rules，已用两轮合成设定及公开历史词验证更新与续接同时生效。图片为原生 ACP image/data/mimeType 格式，不把 base64 或个人文本放进 argv。
 
-只解析已校验 init 之后的顶层 assistant text；忽略 thinking、签名和子 agent 数据，不对原始 stderr 做日志输出。整轮成功且未含伪调用/回执才交给现有回调，保留最大返回值与完整历史侧通道。原生 result.cancelled 或本轮发过中断且进程未成功结束时抛 Interrupted；普通失败不重试，防止重复执行。取消/超时清理本轮进程组及提示文件。模型目录使用明确配置，本机 models 实测当前默认且可用 grok-4.7；不继承旧 Codex 的模型/effort。
+只解析已校验 init 之后的顶层 assistant text；忽略 thinking、签名和子 agent 数据，不对原始 stderr 做日志输出。整轮成功且未含伪调用标记才交给现有回调，保留最大返回值与完整历史侧通道。原生 result.cancelled 或本轮发过中断且进程未成功结束时抛 Interrupted；普通失败不重试，防止重复执行。取消/超时清理本轮进程组及提示文件。模型目录使用明确配置，本机 models 实测当前默认且可用 grok-4.7；不继承旧 Codex 的模型/effort。
 
 ## 独立于模型的前台切换
 
@@ -238,7 +221,7 @@ Grok 续接时会缓存首次系统规则，单纯更换 --agent 文件未能刷
 ## 手动记忆与会话上下文的边界
 
 - `history` 与 `group_context` 是聊天续接/参考；`memory` 是独立本地文件，聊天history不会自动变成记忆。日记和详细日志直接写入 memory/private/diary，查询直接搜索 memory，不复制或刷新副本。
-- `ToolServer.call` 按真实 Source 决定 root 下的 shared/private/当前群目录，模型只能传 query。memory-only 授权的 tools/list 也只含 memory_search，不能借它派单或拍一拍。
+- `ToolServer.call` 按真实 Source 决定 root 下的 shared/private/当前群目录，模型只能传 query。memory-only 授权的 tools/list 也只含 memory_search，不能借它调用别的工具。
 - `tools/speak.py` 与 memory_search 同构，只传 text/style/intensity 和可选的 scene。scene 原样交给语音后端；IndexTTS 后端的 `SceneLibrary` 只从原声库中通过质检、非受限、编号合法的原声里选，协议不接受路径。`ToolServer.call` 用绑定的 Source 调 `VoiceReplies.say`，模型不能指定目标；校验错误原样返回给模型以便改写重试。风格名在 `voice.STYLES`，对应的参考音频与情绪向量只在 `tools/indextts_backend.py` 的 PRESETS，协议不接受路径。`memory_progress.speak_command` 识别本轮下发的 speak 命令形状，与记忆检索一样不放出进度。
 - `tools/memory_search.py` 只读取本轮 grant 并请求 Unix 服务；token 不进入 argv、日志或返回值，轮次结束撤销并删除授权文件。Codex 在 turn/start 前用 thread/inject_items 注入当前轮记忆命令，避免已加载线程恢复时沿用旧授权路径；注入失败不开始该轮。FULL 仍保留其他文件工具，不能将此范围检查说成系统沙箱。
 - `memory.search` 以目录描述符逐层打开，NOFOLLOW 并排除硬链接/特殊文件；每文件最多3个不同片段，含有限相邻上下文，同分时正文优先于Markdown标题；最多5条、单条500字、正文共2000字。关键词检索不等于语义检索，扫描预算与 partial 语义见 MEMORY.md。

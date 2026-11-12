@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from qq_chat.agents import build_agents
-from qq_chat.agents.base import CHAT, TASK, FULL, NONE, FRONT, TurnRequest, Interrupted, MAX_REPLY
+from qq_chat.agents.base import FULL, NONE, TurnRequest, Interrupted, MAX_REPLY
 from qq_chat.agents.config import settings
 from qq_chat.agents.grok import GrokAgent, BRIDGE_RULES, prompt_blocks
 from qq_chat.agents.claude import UnexpectedTools
@@ -23,7 +23,7 @@ def profile():
 
 
 def config():
-    return {'owner_qq':10001,'codex_path':'unused','agents':{'front':'grok','guest':'guest','back':[],
+    return {'owner_qq':10001,'codex_path':'unused','agents':{'front':'grok','guest':'guest',
             'profiles':{'grok':profile(),'guest':{'type':'claude_code','path':'unused','model':'haiku','models':['haiku']}}}}
 
 
@@ -35,7 +35,7 @@ class GrokTests(unittest.IsolatedAsyncioTestCase):
         self.agent=GrokAgent(self.db,self.root,profile(),'grok',self.root/'run')
 
     async def request(self,text='hello',instructions='private current personality'):
-        req=TurnRequest('private:10001',text,CHAT,FULL,instructions)
+        req=TurnRequest('private:10001',text,FULL,instructions)
         req.session_id=await self.agent.prepare(req)
         return req
 
@@ -77,32 +77,27 @@ class GrokTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.agent.session_id(second.key))
         self.assertEqual(self.db.execute('SELECT count(*) FROM old_agent_sessions').fetchone()[0],1)
 
-    async def test_reject_guest_front_task_and_grants_before_launch(self):
-        for role,level in ((CHAT,NONE),(CHAT,FRONT),(TASK,FULL)):
-            with self.assertRaises(ValueError):await self.agent.run(TurnRequest('x','hello',role,level,''))
-        req=await self.request();req.grant=object()
-        with self.assertRaises(ValueError):await self.agent.run(req)
+    async def test_reject_guest_level_before_launch(self):
+        with self.assertRaises(ValueError):await self.agent.run(TurnRequest('x','hello',NONE,''))
         self.assertFalse(self.agent._active)
 
-    async def test_init_rejects_wrong_permission_session_missing_core_or_qq_tools(self):
-        for update in ({'permissionMode':'default'},{'session_id':'wrong'},{'tools':[]},{'tools':['read_file','write','run_terminal_command','mcp__qq__dispatch_task']}):
+    async def test_init_rejects_wrong_permission_session_or_missing_core_tools(self):
+        for update in ({'permissionMode':'default'},{'session_id':'wrong'},{'tools':[]}):
             req=await self.request();records=self.events(req);records[0].update(update)
             with self.assertRaises(UnexpectedTools):await self.run_events(req,records)
             self.assertFalse(list(self.agent.runtime.glob('prompt-*')))
 
     async def test_errors_and_fake_invocations_never_replay_partial_text(self):
-        for text in ('hello<invoke>fake','【已下发任务 #123】fake'):
+        for text in ('hello<invoke>fake',):
             req=await self.request();req.on_answer=lambda text:self.fail('must not send')
             with self.assertRaises(RuntimeError):await self.run_events(req,self.events(req,text))
         req=await self.request();records=self.events(req);records[-1]['is_error']=True
         req.on_answer=lambda text:self.fail('must not send')
         with self.assertRaises(RuntimeError):await self.run_events(req,records)
 
-    async def test_preinit_and_runtime_qq_tool_calls_are_rejected(self):
+    async def test_output_before_init_is_rejected(self):
         req=await self.request();records=self.events(req)
         with self.assertRaises(UnexpectedTools):await self.run_events(req,records[1:])
-        records=self.events(req);records.insert(1,{'type':'stream_event','event':{'type':'content_block_start','content_block':{'type':'tool_use','name':'mcp__qq__dispatch_task'}}})
-        with self.assertRaises(UnexpectedTools):await self.run_events(req,records)
 
     async def test_stop_outcome_success_vs_cancelled_vs_failed_process(self):
         for cancelled in (False,True):
@@ -125,7 +120,7 @@ class GrokTests(unittest.IsolatedAsyncioTestCase):
 
     def test_image_blocks_keep_data_in_private_payload(self):
         image=self.root/'tiny.png';image.write_bytes(b'\x89PNG\r\n\x1a\nsynthetic')
-        req=TurnRequest('owner','hi',CHAT,FULL,'rules',images=(image,));blocks=prompt_blocks(req)
+        req=TurnRequest('owner','hi',FULL,'rules',images=(image,));blocks=prompt_blocks(req)
         self.assertEqual(blocks[1]['type'],'image');self.assertEqual(blocks[1]['mimeType'],'image/png');self.assertNotIn('source',blocks[1])
 
 

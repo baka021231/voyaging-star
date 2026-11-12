@@ -1,4 +1,4 @@
-"""Owner control plane for persistent frontend changes, independent of model turns."""
+"""/front: change which agent profile serves the owner, independent of model turns."""
 import asyncio
 from datetime import datetime
 import json
@@ -20,7 +20,7 @@ def changed_config(cfg, target):
         raise ValueError('未知前台配置，请用 /front 查看可选项。')
     new = json.loads(json.dumps(cfg))
     if 'agents' not in new:
-        new['agents'] = {'front': front, 'guest': guest, 'profiles': profiles, 'back': []}
+        new['agents'] = {'front': front, 'guest': guest, 'profiles': profiles}
     # Pin the previous guest when an older config used the front as its default.
     new['agents'].setdefault('guest', guest)
     new['agents']['front'] = target

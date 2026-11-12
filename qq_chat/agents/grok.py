@@ -12,7 +12,7 @@ import time
 import uuid
 
 from .. import prompts
-from .base import Agent, CHAT, FULL, MAX_REPLY, Interrupted, ExecutionUncertain
+from .base import Agent, FULL, MAX_REPLY, Interrupted, ExecutionUncertain
 from .claude import CALL_MARKERS, UnexpectedTools, terminate, user_message
 
 # Public, constant policy only. Grok caches first-turn system rules on resume.
@@ -43,8 +43,8 @@ class GrokAgent(Agent):
 
     @staticmethod
     def _validate(req):
-        if req.role != CHAT or req.level != FULL or req.grant is not None:
-            raise ValueError('Grok currently supports only owner single-agent CHAT/FULL')
+        if req.level != FULL:
+            raise ValueError('Grok currently supports only the owner at FULL')
 
     async def start(self):
         if shutil.which(self.profile['path']) is None:
@@ -151,8 +151,7 @@ class GrokAgent(Agent):
                         tools = event.get('tools')
                         if (event.get('session_id') != session or event.get('permissionMode') != 'bypassPermissions'
                                 or not isinstance(tools, list) or not all(isinstance(t, str) for t in tools)
-                                or not {'run_terminal_command', 'read_file', 'write'} <= set(tools)
-                                or any(t.startswith('mcp__qq__') for t in tools)):
+                                or not {'run_terminal_command', 'read_file', 'write'} <= set(tools)):
                             raise UnexpectedTools('Grok init identity or permission validation failed')
                         initialized = True
                         self._fresh.discard(session)
@@ -166,15 +165,11 @@ class GrokAgent(Agent):
                             message = event.get('message', {})
                             texts = []
                             for block in message.get('content', []):
-                                if block.get('type') == 'tool_use' and block.get('name', '').startswith('mcp__qq__'):
-                                    raise UnexpectedTools('Grok FULL cannot invoke QQ task tools')
                                 if block.get('type') == 'text': texts.append(block.get('text', ''))
                             if texts: messages[message.get('id', 'assistant')] = '\n'.join(texts)
                         else:
                             inner = event.get('event', {})
                             if inner.get('type') == 'content_block_start' and inner.get('content_block', {}).get('type') == 'tool_use':
-                                if inner['content_block'].get('name', '').startswith('mcp__qq__'):
-                                    raise UnexpectedTools('Grok FULL cannot invoke QQ task tools')
                                 if req.on_progress: req.on_progress('正在使用工具')
                     elif kind == 'result':
                         result = event

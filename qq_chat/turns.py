@@ -4,8 +4,10 @@ from collections import defaultdict
 import contextlib
 from contextlib import asynccontextmanager
 from functools import wraps
+import logging
 
 from .agents.base import Interrupted
+from .message_policy import owner_request
 
 
 def serialized(method):
@@ -53,17 +55,17 @@ class Turns:
             yield
         except Interrupted:
             with contextlib.suppress(Exception):
-                await self.send(source, '当前前台轮次已确认停止。')
+                await self.send(source, '当前这一轮已确认停止。')
             raise
         except Exception:
             if stops.get(key) is token:
                 with contextlib.suppress(Exception):
-                    await self.send(source, '当前前台轮次停止前已失败。')
+                    await self.send(source, '当前这一轮停止前已失败。')
             raise
         else:
             if stops.get(key) is token:
                 with contextlib.suppress(Exception):
-                    await self.send(source, '当前前台轮次停止前已完成。')
+                    await self.send(source, '当前这一轮停止前已完成。')
         finally:
             active.pop(key, None)
             tokens.pop(key, None)
@@ -73,19 +75,32 @@ class Turns:
         await asyncio.sleep(30)
         if self.__dict__.get('_front_stops', {}).get(self.conversation(source)) is token:
             with contextlib.suppress(Exception):
-                await self.send(source, '前台停止尚未确认，仍在等待执行端；当前会话轮次尚未释放。')
+                await self.send(source, '停止尚未确认，仍在等待执行端；当前这一轮尚未释放。')
 
-    async def stop_front(self, source):
-        """/stop without arguments: ask the agent to end the turn that is running in this chat."""
+    async def stop_command(self, source, text):
+        """/stop: the owner asks the agent to end the turn running in this chat; silent for everyone else."""
+        if not owner_request(source, self.cfg['owner_qq']):
+            return
+        try:
+            if len(text.split()) != 1:
+                await self.send(source, '用法：/stop（停止当前这一轮）')
+                return
+            await self._stop_front(source)
+        except Exception:
+            logging.warning('Stop command failed')
+            with contextlib.suppress(Exception):
+                await self.send(source, '停止操作未完成，请稍后重试。')
+
+    async def _stop_front(self, source):
         key = self.conversation(source)
         active = self.__dict__.setdefault('_active_front', {}).get(key)
         if active is None:
-            await self.send(source, '当前会话没有正在执行的前台轮次。')
+            await self.send(source, '当前会话没有正在执行的轮次。')
             return
         token = self._front_tokens[key]
         self.__dict__.setdefault('_front_stops', {})[key] = token
         self.background(self.front_stop_watchdog(source, token))
-        await self.send(source, '已请求停止当前前台轮次，等待执行端确认。')
+        await self.send(source, '已请求停止当前这一轮，等待执行端确认。')
         try:
             delivered = await active.interrupt(key)
         except Exception:

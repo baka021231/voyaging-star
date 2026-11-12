@@ -15,7 +15,7 @@ from qq_chat.front_switch import (atomic_json, changed_config, command, choices,
 
 
 def config():
-    return {'owner_qq': 123, 'agents': {'front': 'grok', 'guest': 'guest', 'back': [], 'profiles': {
+    return {'owner_qq': 123, 'agents': {'front': 'grok', 'guest': 'guest', 'profiles': {
         'grok': {'type': 'grok_build', 'path': '/bin/true', 'model': 'grok-4.7',
                  'models': ['grok-4.7'], 'permission_mode': 'bypassPermissions', 'sandbox': 'off'},
         'codex': {'type': 'codex_app', 'path': '/bin/true'},
@@ -103,7 +103,6 @@ class FrontSwitchTests(unittest.IsolatedAsyncioTestCase):
         current = self.read_config()
         self.assertEqual(current['agents']['front'], 'codex')
         self.assertEqual(current['agents']['guest'], 'guest')
-        self.assertEqual(current['agents']['back'], [])
         self.assertEqual(current['group_user_blacklist'], ['555'])
         self.assertEqual(json.loads((self.root/'config.json.bak').read_text()), latest)
         self.assertEqual((self.root/'config.json.bak').stat().st_mode & 0o777, 0o600)
@@ -137,7 +136,7 @@ class FrontSwitchTests(unittest.IsolatedAsyncioTestCase):
         restart.assert_not_called(); self.assertEqual(self.read_config(), latest)
         self.assertEqual(json.loads(path.read_text())['status'], 'failed')
 
-    def test_legacy_default_guest_is_pinned_and_unsafe_grok_back_is_rejected(self):
+    def test_legacy_default_guest_is_pinned_and_old_back_config_is_rejected(self):
         cfg = self.cfg; cfg['agents']['front'] = 'codex'; del cfg['agents']['guest']
         updated = changed_config(cfg, 'grok')
         self.assertEqual(updated['agents']['guest'], 'codex')
@@ -176,7 +175,6 @@ class FrontSwitchTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(busy.is_set())
             finally:
                 task.cancel(); await asyncio.gather(task, return_exceptions=True)
-                await bridge.tasks.close()
 
     async def test_scheduler_uses_independent_service_without_shell(self):
         process = SimpleNamespace(wait=AsyncMock(return_value=0))

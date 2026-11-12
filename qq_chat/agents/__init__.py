@@ -1,7 +1,7 @@
-"""Build validated front, guest and background profiles with shared Codex transport."""
+"""Build the validated agent profiles; Codex profiles share one transport."""
 from pathlib import Path
 
-from .base import Agent, CHAT, FULL, NONE, TurnRequest
+from .base import Agent, FULL, NONE, TurnRequest
 from .codex import CodexAgent
 from .claude import ClaudeCodeAgent
 from .grok import GrokAgent

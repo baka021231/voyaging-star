@@ -99,7 +99,6 @@ class PrivateSpeakTests(unittest.IsolatedAsyncioTestCase):
     asyncSetUp = fixtures.GroupSpeakTests.asyncSetUp
     asyncTearDown = fixtures.GroupSpeakTests.asyncTearDown
     setup_tools = fixtures.GroupSpeakTests.setup_tools
-    full_codex = fixtures.GroupSpeakTests.full_codex
     enable_voice = fixtures.GroupSpeakTests.enable_voice
     voice_only = fixtures.GroupSpeakTests.voice_only
     speak_during_turn = fixtures.GroupSpeakTests.speak_during_turn
@@ -165,5 +164,4 @@ class PrivateVoiceControlSessionTests(unittest.IsolatedAsyncioTestCase):
                 finally:
                     task.cancel()
                     await asyncio.gather(task, return_exceptions=True)
-                    await bridge.tasks.close()
                     bridge.db.close()

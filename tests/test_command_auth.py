@@ -57,33 +57,34 @@ class CommandAuthTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_group_member_cannot_reset_or_read_session_or_use_future_commands(self):
         before = self.snapshot()
-        for command in ('/new', '/session', '/model', '/models', '/model test-model', '/block 123', '/unblock 789', '/blacklist', '/effort max', '/front', '/front codex', '/FRONT grok', '/future', '/NEW', '/new extra'):
+        for command in ('/new', '/session', '/model', '/models', '/model test-model', '/block 123', '/unblock 789', '/blacklist', '/effort max', '/front', '/front codex', '/FRONT grok', '/future', '/NEW', '/new extra',
+                        '/task edit file', '/tasks'):
             await self.dispatch(Source('group', 999, 789, '心糖'), command)
             self.assertIn('仅限主人', self.sent[-1])
             self.assertNotIn('id-group', self.sent[-1])
             self.assertEqual(self.snapshot(), before)
 
-    async def test_task_commands_from_guests_are_silent_and_do_not_touch_state(self):
+    async def test_stop_from_guests_is_silent_and_does_not_touch_state(self):
         before = self.snapshot()
         for source in (Source('group', 999, 789, '主人'), Source('private', 789, 789)):
-            for command in ('/task edit file', '/task release 1', '/task check 1', '/tasks', '/stop', '/stop all', '/STOP 1'):
+            for command in ('/stop', '/stop all', '/STOP 1'):
                 await self.dispatch(source, command)
                 self.assertEqual(self.sent, [])
                 self.assertEqual(self.snapshot(), before)
 
-    async def test_front_grants_reject_guest_and_forged_private_target(self):
+    async def test_tool_grants_reject_guest_and_forged_private_target(self):
         from qq_chat.tool_server import ToolServer
         with tempfile.TemporaryDirectory() as folder:
             server = ToolServer(self.bridge, folder)
             server.server = object()  # Grant checks run before any socket or file work.
             for source in (Source('group',999,789,'主人'), Source('private',789,789), Source('private',789,123)):
                 with self.assertRaises(ValueError):
-                    async with server.grant(source): pass
+                    async with server.grant(source, names=('memory_search',)): pass
             self.assertEqual(server.grants,{})
             self.assertEqual(list(Path(folder).iterdir()),[])
 
     async def test_grok_front_selection_does_not_open_model_management_to_guests(self):
-        self.bridge.cfg['agents']={'front':'grok','guest':'codex','back':[]}
+        self.bridge.cfg['agents']={'front':'grok','guest':'codex'}
         # Authorization must run before looking up the new owner's model backend.
         await self.dispatch(Source('group',999,789,'主人'),'/models')
         self.assertIn('仅限主人',self.sent[-1])
