@@ -26,12 +26,13 @@
 | `tools/` | 当前可用的连接检查、重启工具 |
 | `docs/FEATURES.md` | 功能说明：能做什么、限制、不支持的功能、已知问题 |
 | `docs/MEMORY.md` | 手动记忆检索：目录范围、授权、结果限制与验收边界 |
-| `docs/FRONT-BACK.md` | 分阶段设计和历史实测记录；当前实现看 FEATURES/ARCHITECTURE |
+| `docs/DECISIONS.md` | 项目级的决定记录：背景、方案、依据、谁拍板（语音的另见 VOICE-DECISIONS） |
+| `docs/FRONT-BACK.md` | 已放弃的前后台分离方案的设计和阶段记录（历史）；当前实现看 FEATURES/ARCHITECTURE |
 | `docs/VOICE.md` | 语音模块现状：一条语音怎么出来、开关、已知问题和待办 |
 | `docs/VOICE-DECISIONS.md` | 语音模块的决定记录：背景、方案、依据、谁拍板 |
 | `docs/VOICE-HISTORY.md` | 语音模块的安装、排查和实验历史（归档，不再更新） |
 | `docs/BACKLOG.md` | 需求待办：目标、验收标准和待定事项 |
-| `docs/ROADMAP.md` | 远景小地图：语音、前后台协作与希望实现的体验 |
+| `docs/ROADMAP.md` | 远景小地图：语音、干活时不耽误聊天等希望实现的体验 |
 | `docs/ARCHITECTURE.md` | 架构与开发说明：模块、权限模型、数据库、常见改动、测试写法 |
 | `docs/AGENT-INTERFACE.md` | Agent 统一接口与隔离设计（设计稿，尚未实现）：分层职责、接口草案、迁移步骤 |
 | `docs/APPSERVER-MIGRATION.md` | Codex 会话映射与终端接续 |
@@ -107,6 +108,8 @@
 Claude 回复完整校验后才按气泡发出，因此没有即时首字；Codex 流式保留。`/models` 对 Claude 读取配置目录，model 项也可用对象形式声明 `defaultReasoningEffort` 和 `supportedReasoningEfforts`；未声明档位时 `/effort` 不允许切换，不从 CLI 通用列表推断模型支持情况。新 profile 不继承其他 profile 的模型名。更多边界见 `docs/FRONT-BACK.md` 和 `docs/ARCHITECTURE.md`。
 
 ### 前后台分离配置（含 PR3 手动入口）
+
+> 这个模式 2026-10-28 已回退，本机不再使用，理由见 `docs/DECISIONS.md` 的 P01。下面的配置方法只作为代码仍支持的选项保留。
 
 在已有 profiles 中选择一个后台，增加以下配置（示例将 `codex` 作为后台；保留自己的 front/guest 选择）：
 
