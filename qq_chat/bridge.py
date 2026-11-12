@@ -17,7 +17,8 @@ from .agents import CHAT, FULL, NONE, TurnRequest, build_agents
 from .agents.base import MissingSession, Interrupted, FRONT
 from .tool_server import SPEAK, ToolServer
 from .tasks import TaskManager
-from .task_commands import TaskCommands, serialized
+from .task_commands import TaskCommands
+from .turns import serialized
 from .agents.config import legacy_codex_profile, settings
 from .agents.state import AgentState, recent_history
 from .files import MAX_FILE_BYTES, save_attachment

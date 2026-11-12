@@ -48,10 +48,12 @@ NapCat ◀──WebSocket── Bridge.send()  全局锁，间隔随机 2～3 �
 | `memory_progress.py` | 识别直接记忆查询，按真实 Codex 活动事件缓冲/释放进度 | 标准库 |
 | `front_tools.py` | 标准库 MCP stdio shim，经令牌转发工具调用 | 标准库 |
 | `tasks.py` | TaskManager：持久任务、接纳上限、后台执行、写锁、中断与保守重启善后 | `agents.base`、`prompts`、`message_policy` |
-| `task_commands.py` | TaskCommands：会话锁、手动命令、可补发回报与共享 deliver | `tasks`、`agents.base`、`prompts`、`message_policy` |
+| `turns.py` | `Turns`：会话锁、`/stop` 停当前轮、把回复发出去并写入历史的 `deliver`；每条消息都经过 | `agents.base` |
+| `task_commands.py` | TaskCommands：后台任务的手动命令与可补发回报（本机未启用，见 `docs/DECISIONS.md` P01） | `turns`、`tasks`、`agents.base`、`prompts`、`message_policy` |
 | `prompts.py` | 公共权限/角色提示词与历史拼接；本轮记忆命令说明由 Bridge 补入 | `moderation` |
 | `message_text.py` / `message_references.py` | 消息文字与 @ 标签；引用、合并转发的受限展开 | `message_references` → `message_text` |
-| `front_switch.py` | 前台 profile 切换、配置备份、独立重启与结果通知 | `agents.config` |
+| `front_switch.py` | `/front`：换主人用哪个 agent，备份配置、独立重启并通知结果 | `agents.config`、`config_file` |
+| `config_file.py` | 运行中安全改写 `config.json`：文件锁与原子替换，`/front`、`/voice` 共用 | 标准库 |
 | `voice.py` | 合成进程协议、语音队列、音频校验 | `speech_normalize` |
 | `speech_normalize.py` / `speech_runtime.py` | 朗读文本清理；独立语音工具的授权调用客户端 | 标准库 |
 | `reply.py` | `BubbleStream`：把流式回复切成 QQ 气泡 | 无 |

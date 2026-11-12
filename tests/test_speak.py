@@ -13,7 +13,7 @@ from qq_chat import prompts
 from qq_chat.bridge import Source, Bridge
 from qq_chat.memory_progress import SPEAK_SCRIPT, MemoryProgress, speak_command
 from qq_chat.voice import SPEAK_MAX_CHARS, ProcessSynthesizer, VoiceReplies, speak_text
-import tests.test_front_tools as front_tests
+from tests.support import BridgeCase
 from tests.test_voice import wav_bytes
 
 LINE = '准备好了吗？我们出发吧！'
@@ -75,12 +75,7 @@ class SpeakQueueTests(unittest.IsolatedAsyncioTestCase):
                                     {'text': '第二句', 'style': '安慰', 'intensity': '低'}])
 
 
-class SpeakToolTests(unittest.IsolatedAsyncioTestCase):
-    asyncSetUp = front_tests.FrontToolsTests.asyncSetUp
-    asyncTearDown = front_tests.FrontToolsTests.asyncTearDown
-    setup_tools = front_tests.FrontToolsTests.setup_tools
-    token = front_tests.FrontToolsTests.token
-
+class SpeakToolTests(BridgeCase):
     def enable_voice(self):
         self.calls, self.audio = [], []
 

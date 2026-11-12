@@ -11,26 +11,16 @@ from unittest.mock import patch
 from qq_chat.agents.base import FRONT, NONE
 from qq_chat.bridge import Source
 from qq_chat.tool_server import FRONT_TOOLS, ToolServer, tool_definitions
-import tests.test_tasks as task_tests
+from tests.support import BridgeCase
 
 
-class FrontToolsTests(unittest.IsolatedAsyncioTestCase):
-    asyncSetUp = task_tests.TaskTests.asyncSetUp
-    until = task_tests.TaskTests.until
-    create = task_tests.TaskTests.create
-    row = task_tests.TaskTests.row
+class FrontToolsTests(BridgeCase):
+    async def create(self, goal='repair code', source=None):
+        source = source or self.owner
+        return (await self.bridge.tasks.dispatch(self.bridge.conversation(source), source, goal))['id']
 
-    async def asyncTearDown(self):
-        await self.bridge.tool_server.close()
-        await task_tests.TaskTests.asyncTearDown(self)
-
-    async def setup_tools(self):
-        await self.bridge.tool_server.start()
-        self.cfg['agents']['profiles']['front']['type'] = 'claude_code'
-        return self.bridge.tool_server
-
-    def token(self, grant):
-        return json.loads(Path(grant.config_path).read_text())['mcpServers']['qq']['env']['QQ_TOOL_TOKEN']
+    def row(self, ident):
+        return self.bridge.tasks.get(ident)
 
     async def test_grant_permissions_revoke_expiry_and_foreign_source(self):
         server = await self.setup_tools()

@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from qq_chat.memory import search
-from tests import test_front_tools as front_tests
+from tests.support import BridgeCase
 
 
 class SearchTests(unittest.TestCase):
@@ -108,13 +108,7 @@ class SearchTests(unittest.TestCase):
 
 
 
-# Reuse setup helpers rather than inheriting and silently re-running all tests.
-class MemoryToolTests(unittest.IsolatedAsyncioTestCase):
-    asyncSetUp = front_tests.FrontToolsTests.asyncSetUp
-    asyncTearDown = front_tests.FrontToolsTests.asyncTearDown
-    setup_tools = front_tests.FrontToolsTests.setup_tools
-    token = front_tests.FrontToolsTests.token
-
+class MemoryToolTests(BridgeCase):
     async def test_authenticated_scope_query_validation_and_memory_only_grant(self):
         server = await self.setup_tools()
         root = self.root / 'workspace/memory'
