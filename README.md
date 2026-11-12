@@ -27,7 +27,9 @@
 | `docs/FEATURES.md` | 功能说明：能做什么、限制、不支持的功能、已知问题 |
 | `docs/MEMORY.md` | 手动记忆检索：目录范围、授权、结果限制与验收边界 |
 | `docs/FRONT-BACK.md` | 分阶段设计和历史实测记录；当前实现看 FEATURES/ARCHITECTURE |
-| `docs/VOICE.md` | 本地角色语音安装、解耦接口、实测与启用方法 |
+| `docs/VOICE.md` | 语音模块现状：一条语音怎么出来、开关、已知问题和待办 |
+| `docs/VOICE-DECISIONS.md` | 语音模块的决定记录：背景、方案、依据、谁拍板 |
+| `docs/VOICE-HISTORY.md` | 语音模块的安装、排查和实验历史（归档，不再更新） |
 | `docs/BACKLOG.md` | 需求待办：目标、验收标准和待定事项 |
 | `docs/ROADMAP.md` | 远景小地图：语音、前后台协作与希望实现的体验 |
 | `docs/ARCHITECTURE.md` | 架构与开发说明：模块、权限模型、数据库、常见改动、测试写法 |
