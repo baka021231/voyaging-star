@@ -18,6 +18,7 @@ from .agents.base import MissingSession, Interrupted
 from .tool_server import SPEAK, ToolServer
 from .turns import Turns, serialized
 from .onebot import OneBot
+from .store import Store, open_database
 from .agents.config import legacy_codex_profile, settings
 from .agents.state import AgentState, recent_history
 from .files import MAX_FILE_BYTES, save_attachment
@@ -43,7 +44,7 @@ REFERENCE_REFRESH_TIMEOUT = 5
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 
-class Bridge(Turns, OneBot):
+class Bridge(Turns, OneBot, Store):
     def blocked(self, source):
         return blocked_group_sender(source, self.cfg)
 
@@ -84,23 +85,7 @@ class Bridge(Turns, OneBot):
                 self.send_audio, self.send, self.blocked,
                 record=VoiceLog(voice['debug_log']) if voice.get('debug_log') else None,
                 conversation=conversation_name)
-        self.db = sqlite3.connect(BASE / "chat.sqlite3")
-        self.db.execute("CREATE TABLE IF NOT EXISTS seen (id TEXT PRIMARY KEY, time REAL)")
-        self.db.execute("CREATE TABLE IF NOT EXISTS history (role TEXT, content TEXT)")
-        # Preserve pre-upgrade history exclusively for the owner's private chat.
-        if "conversation" not in {row[1] for row in self.db.execute("PRAGMA table_info(history)")}:
-            self.db.execute("ALTER TABLE history ADD COLUMN conversation TEXT")
-            self.db.execute("UPDATE history SET conversation=?", (f"private:{int(cfg['owner_qq'])}",))
-        self.db.execute("CREATE TABLE IF NOT EXISTS threads (conversation TEXT PRIMARY KEY, thread_id TEXT NOT NULL)")
-        self.db.execute("CREATE TABLE IF NOT EXISTS conversation_models (conversation TEXT PRIMARY KEY, model TEXT NOT NULL, effort TEXT)")
-        self.db.execute("CREATE TABLE IF NOT EXISTS bootstrap (thread_id TEXT PRIMARY KEY)")
-        self.db.execute("CREATE TABLE IF NOT EXISTS old_threads (conversation TEXT, thread_id TEXT, time REAL)")
-        self.db.execute("CREATE TABLE IF NOT EXISTS group_context (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER, content TEXT)")
-        self.db.execute("CREATE INDEX IF NOT EXISTS group_context_group ON group_context(group_id, id)")
-        self.db.execute("CREATE TABLE IF NOT EXISTS group_context_cursors ("
-                        "conversation TEXT NOT NULL, profile TEXT NOT NULL, session_id TEXT NOT NULL, "
-                        "last_id INTEGER NOT NULL, PRIMARY KEY(conversation,profile,session_id))")
-        self.db.commit()
+        self.db = open_database(BASE / 'chat.sqlite3', cfg['owner_qq'])
         _, _, profiles = settings(cfg)
         self._agent_state = AgentState(self.db, legacy_codex_profile(cfg),
                                        {name: profile['type'] for name, profile in profiles.items()})
@@ -134,54 +119,6 @@ class Bridge(Turns, OneBot):
 
     def save_selection(self, source, model, effort):
         self.state.save(self.conversation(source), self.agent_for(source).name, model, effort)
-
-    def remember_group(self, source, text):
-        cursor = self.db.execute("INSERT INTO group_context (group_id, content) VALUES (?, ?)",
-                                 (source.target, speaker_message(source, text[:1000], self.cfg['owner_qq'])))
-        context_id = cursor.lastrowid
-        self.db.execute("DELETE FROM group_context WHERE group_id=? AND id NOT IN "
-                        "(SELECT id FROM group_context WHERE group_id=? ORDER BY id DESC LIMIT 100)",
-                        (source.target, source.target))
-        self.db.commit()
-        return context_id
-
-    def group_reference(self, source, context_id, thread=None):
-        if source.kind != 'group' or context_id is None:
-            return ''
-        agent = self.agent_for(source)
-        thread = thread or agent.session_id(self.conversation(source)) or ''
-        last_id = self.db.execute("SELECT COALESCE(MAX(last_id),0) FROM group_context_cursors "
-                                  "WHERE conversation=? AND profile=? AND session_id IN (?, '')",
-                                  (self.conversation(source), agent.name, thread)).fetchone()[0]
-        rows = self.db.execute("SELECT content FROM group_context WHERE group_id=? AND id>? AND id<? "
-                               "ORDER BY id DESC LIMIT 40", (source.target, last_id, context_id)).fetchall()
-        messages, size = [], 0
-        for (content,) in rows:
-            if size + len(content) > 12000:
-                break
-            messages.append(content)
-            size += len(content)
-        if not messages:
-            return ''
-        return prompts.group_context(list(reversed(messages)))
-
-    def advance_group_context(self, source, thread, context_id):
-        if source.kind != 'group' or context_id is None:
-            return
-        self.db.execute("INSERT INTO group_context_cursors VALUES (?,?,?,?) "
-                        "ON CONFLICT(conversation,profile,session_id) DO UPDATE "
-                        "SET last_id=MAX(last_id,excluded.last_id)",
-                        (self.conversation(source), self.agent_for(source).name, thread, context_id))
-
-    def reset_group_context(self, source, context_id=None):
-        if source.kind != 'group':
-            return
-        key, profile = self.conversation(source), self.agent_for(source).name
-        latest = context_id if context_id is not None else self.db.execute(
-            "SELECT COALESCE(MAX(id),0) FROM group_context WHERE group_id=?", (source.target,)).fetchone()[0]
-        self.db.execute("DELETE FROM group_context_cursors WHERE conversation=? AND profile=?", (key, profile))
-        # An empty session ID is a floor for future sessions after explicit /new.
-        self.db.execute("INSERT INTO group_context_cursors VALUES (?,?,?,?)", (key, profile, '', latest))
 
     def speak_enabled(self):
         """tool mode: the agent decides when to speak; replies are not voiced automatically."""
@@ -429,14 +366,6 @@ class Bridge(Turns, OneBot):
         self.save_selection(source, name, effort)
         notice = '该模型仅支持文字。' if 'image' not in models[name].get('inputModalities', ['text', 'image']) else ''
         await self.send(source, '当前会话已选择 ' + name + '，下一条消息使用该模型，聊天上下文保留。' + notice)
-
-    def turn_text(self, source, thread, text, context_id):
-        """Prefix old-bridge history (until the thread is bootstrapped) and unseen group context."""
-        if not self.db.execute("SELECT 1 FROM bootstrap WHERE thread_id=?", (thread,)).fetchone():
-            history = recent_history(self.db, self.conversation(source))
-            if history:
-                text = prompts.history_import(history, text)
-        return self.group_reference(source, context_id, thread) + text
 
     async def relay_progress(self, source, queue):
         while True:
@@ -733,12 +662,8 @@ class Bridge(Turns, OneBot):
                 if message_id is None:
                     continue
                 self.remember_message_origin(message_id, incoming.source)
-                key = str(event.get("self_id")) + ":" + str(message_id)
-                if self.db.execute("SELECT 1 FROM seen WHERE id=?", (key,)).fetchone():
+                if not self.first_delivery(str(event.get("self_id")) + ":" + str(message_id)):
                     continue
-                self.db.execute("INSERT INTO seen VALUES (?, ?)", (key, time.time()))
-                self.db.execute("DELETE FROM seen WHERE time < ?", (time.time() - 7 * 86400,))
-                self.db.commit()
                 if incoming.source.kind == 'group':
                     triggered = incoming_text(event, self.cfg['owner_qq'], self.cfg.get('allowed_groups', []),
                                               allow_all_groups=self.cfg.get('allow_all_groups', True),
