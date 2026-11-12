@@ -115,12 +115,10 @@ class GroupSpeakTests(unittest.IsolatedAsyncioTestCase):
     asyncSetUp = speech_fixtures.SpeakToolTests.asyncSetUp
     asyncTearDown = speech_fixtures.SpeakToolTests.asyncTearDown
     setup_tools = speech_fixtures.SpeakToolTests.setup_tools
-    full_codex = speech_fixtures.SpeakToolTests.full_codex
     enable_voice = speech_fixtures.SpeakToolTests.enable_voice
 
     async def voice_only(self):
         server = await self.setup_tools()
-        self.full_codex()
         self.enable_voice()
         self.cfg['voice']['group_voice_only'] = True
         async def close_voice():

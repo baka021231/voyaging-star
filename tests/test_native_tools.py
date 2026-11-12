@@ -5,7 +5,7 @@ import sqlite3
 import unittest
 from unittest.mock import patch
 
-from qq_chat.agents.base import CHAT, NONE, TurnRequest
+from qq_chat.agents.base import NONE, TurnRequest
 from qq_chat.agents.codex import CodexAgent
 from qq_chat.codex_app import AppServer
 from qq_chat.bridge import Source
@@ -19,12 +19,10 @@ class NativeSpeechTests(unittest.IsolatedAsyncioTestCase):
     asyncSetUp = speech_fixtures.SpeakToolTests.asyncSetUp
     asyncTearDown = speech_fixtures.SpeakToolTests.asyncTearDown
     setup_tools = speech_fixtures.SpeakToolTests.setup_tools
-    full_codex = speech_fixtures.SpeakToolTests.full_codex
     enable_voice = speech_fixtures.SpeakToolTests.enable_voice
 
     async def test_guest_native_binding_has_only_speak_and_preserves_all_checks(self):
         server = await self.setup_tools()
-        self.full_codex()
         self.enable_voice()
         self.cfg['voice']['group_enabled'] = True
         guest = Source('group', 20001, 30001)
@@ -64,7 +62,6 @@ class NativeSpeechTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_bridge_passes_native_tool_without_command_or_capability_file(self):
         await self.setup_tools()
-        self.full_codex()
         self.enable_voice()
         self.cfg['voice']['group_enabled'] = True
         guest = Source('group', 20001, 30001)
@@ -174,7 +171,7 @@ class NativeSessionTests(unittest.IsolatedAsyncioTestCase):
                 return {'thread': {'id': 'new'}, 'model': 'actual', 'reasoningEffort': 'medium'}
         tools = ({'type': 'function', 'name': 'speak', 'description': 'test', 'inputSchema': {}},)
         agent = CodexAgent(db, '/unused', 'unused', app=App())
-        req = TurnRequest('group:1', 'hello', CHAT, NONE, '', dynamic_tools=tools)
+        req = TurnRequest('group:1', 'hello', NONE, '', dynamic_tools=tools)
         self.assertEqual(await agent.prepare(req), 'new')
         self.assertEqual(calls[0][0], 'thread/start')
         self.assertEqual(calls[0][1]['sandbox'], 'read-only')
@@ -197,7 +194,7 @@ class NativeSessionTests(unittest.IsolatedAsyncioTestCase):
             async def start(self): pass
             async def call(self, *args): raise RuntimeError('registration failed')
         agent = CodexAgent(db, '/unused', 'unused', app=App())
-        req = TurnRequest('group:1', '', CHAT, NONE, '', dynamic_tools=({'name': 'speak'},))
+        req = TurnRequest('group:1', '', NONE, '', dynamic_tools=({'name': 'speak'},))
         with self.assertRaisesRegex(RuntimeError, 'registration failed'):
             await agent.prepare(req)
         self.assertEqual(agent.session_id('group:1'), 'old')

@@ -5,7 +5,7 @@ from pathlib import Path
 import time
 
 from ..models import available_models, configured_default
-from .base import Agent, CHAT, TASK, FULL, MAX_REPLY, NONE, TurnRequest
+from .base import Agent, FULL, MAX_REPLY, NONE, TurnRequest
 
 
 class CodexAgent(Agent):
@@ -18,7 +18,6 @@ class CodexAgent(Agent):
         self.profile, self.legacy = dict(profile or {}), legacy
         self._models = {}
         self._efforts = {}
-        self._task_sessions = {}
         self.db.execute('CREATE TABLE IF NOT EXISTS codex_tool_sessions '
                         '(thread_id TEXT PRIMARY KEY, tools_json TEXT NOT NULL)')
 
@@ -26,8 +25,6 @@ class CodexAgent(Agent):
         await self.app.start()
 
     def session_id(self, key):
-        if key.startswith('task:'):
-            return self._task_sessions.get(key)
         if self.legacy:
             row = self.db.execute('SELECT thread_id FROM threads WHERE conversation=?', (key,)).fetchone()
         else:
@@ -39,8 +36,8 @@ class CodexAgent(Agent):
         return self._models.get(session_id), self._efforts.get(session_id)
 
     async def prepare(self, req: TurnRequest):
-        if req.role not in (CHAT, TASK) or req.level not in (FULL, NONE) or (req.role == TASK and req.level != FULL):
-            raise ValueError('Unsupported Codex role/level')
+        if req.level not in (FULL, NONE):
+            raise ValueError('Unsupported Codex level')
         options = {'cwd': str(self.cwd), 'approvalPolicy': 'never',
                    'sandbox': self.profile.get('sandbox', 'danger-full-access') if req.level == FULL else 'read-only',
                    'developerInstructions': req.instructions}
@@ -77,9 +74,7 @@ class CodexAgent(Agent):
         thread = result['thread']['id']
         if req.dynamic_tools:
             self.db.execute('INSERT INTO codex_tool_sessions VALUES (?, ?)', (thread, tools_json))
-        if req.role == TASK:
-            self._task_sessions[req.key] = thread
-        elif self.legacy:
+        if self.legacy:
             self.db.execute('INSERT INTO threads VALUES (?, ?) ON CONFLICT(conversation) '
                             'DO UPDATE SET thread_id=excluded.thread_id', (req.key, thread))
         else:
@@ -100,8 +95,6 @@ class CodexAgent(Agent):
                 'threadId': thread, 'items': [{'type': 'message', 'role': 'developer',
                 'content': [{'type': 'input_text', 'text': req.runtime_instructions}]}]})
         options = {'model': req.model, 'effort': req.effort} if req.model is not None else {}
-        if req.on_runtime is not None:
-            options['on_started'] = req.on_runtime
         if req.on_activity is not None:
             options['on_activity'] = req.on_activity
         if req.on_tool_call is not None:
@@ -127,19 +120,6 @@ class CodexAgent(Agent):
 
     async def default_model(self):
         return await configured_default(self.app, self.cwd)
-
-    async def check_execution(self, session, runtime_ref=None):
-        """One read-only RPC, never resume, interrupt, retry or release a task."""
-        await self.start()
-        result = await self.app.call('thread/read', {'threadId': session, 'includeTurns': True})
-        turns = result.get('thread', {}).get('turns', [])
-        turn_id = (runtime_ref or {}).get('turn_id')
-        matches = [turn for turn in turns if turn.get('id') == turn_id] if turn_id else turns
-        # PR3 creates exactly one turn per task thread. Never infer from another turn.
-        if len(matches) != 1:
-            return 'unknown'
-        status = matches[0].get('status')
-        return status if status in ('inProgress', 'completed', 'failed', 'interrupted') else 'unknown'
 
     async def interrupt(self, key):
         thread = self.session_id(key)

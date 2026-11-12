@@ -1,6 +1,6 @@
 # Agent 统一接口与隔离设计
 
-> 状态：设计稿，尚未实现。基线 `0912d5b`（2026-10-28）。本文描述目标结构和迁移步骤，不代表当前代码行为；当前实现看 [ARCHITECTURE.md](ARCHITECTURE.md) 和 [FEATURES.md](FEATURES.md)。本文不构成新增操作授权。
+> 状态：设计稿，尚未实现。基线 `0912d5b`（2026-10-28）。本文描述目标结构和迁移步骤，不代表当前代码行为。2026-11-13 前后台分离的代码已删除，文中提到的 `tasks.py`、`TaskManager`、`/task check`、FRONT 级别、TASK 角色和 `FRONT_TOOLS` 都已不存在，重新启动这份设计前要先按现有代码改一遍；当前实现看 [ARCHITECTURE.md](ARCHITECTURE.md) 和 [FEATURES.md](FEATURES.md)。本文不构成新增操作授权。
 
 ## 0. 结论
 

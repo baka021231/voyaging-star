@@ -108,7 +108,7 @@ class AppServer:
             for q in self.events.values():
                 q.put_nowait({'method': 'disconnected'})
 
-    async def turn(self, thread, text, on_progress=None, on_answer=None, show_tools=False, image_paths=(), model=None, effort=None, on_started=None, on_activity=None, on_tool_call=None):
+    async def turn(self, thread, text, on_progress=None, on_answer=None, show_tools=False, image_paths=(), model=None, effort=None, on_activity=None, on_tool_call=None):
         q = asyncio.Queue()
         self.events[thread] = q
         turn_id = None
@@ -124,8 +124,6 @@ class AppServer:
             result = await self.call('turn/start', params)
             turn_id = result['turn']['id']
             self.active_turns[thread] = turn_id
-            if on_started:
-                on_started({'thread_id': thread, 'turn_id': turn_id})
             messages = {}
             tool_results = {}
             phases, streamed = {}, {}

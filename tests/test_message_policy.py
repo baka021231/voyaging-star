@@ -14,28 +14,23 @@ from qq_chat.message_policy import Source, incoming_text, speaker_message, owner
 
 
 class MessagePolicyTests(unittest.TestCase):
-    def test_split_front_is_none_but_owner_identity_and_private_rules_are_preserved(self):
+    def test_owner_in_group_is_full_with_private_rules_and_guest_is_none_without(self):
         async def check():
             with tempfile.TemporaryDirectory() as directory, patch('qq_chat.bridge.BASE', Path(directory)):
                 root = Path(directory); (root / 'workspace').mkdir()
                 (root / 'workspace/OWNER.md').write_text('owner-only setting')
-                cfg = {'owner_qq': 123, 'agents': {'front': 'codex', 'guest': 'codex', 'back': ['codex'],
-                       'profiles': {'codex': {'type': 'codex_app', 'path': 'unused', 'writes': True}}}}
+                cfg = {'owner_qq': 123, 'agents': {'front': 'codex', 'guest': 'codex',
+                       'profiles': {'codex': {'type': 'codex_app', 'path': 'unused'}}}}
                 bridge = Bridge(cfg)
                 try:
                     owner = Source('group', 999, 123)
                     guest = Source('group', 999, 789, '主人')
                     a = await bridge.turn_request(owner, True)
                     b = await bridge.turn_request(guest, False)
-                    self.assertEqual(a.level, 'none')
+                    self.assertEqual(a.level, 'full')
                     self.assertEqual(b.level, 'none')
                     self.assertIn('owner-only setting', a.instructions)
                     self.assertNotIn('owner-only setting', b.instructions)
-                    self.assertIn('请主人用 /task 目标', a.instructions)
-                    self.assertNotIn('请主人用 /task 目标', b.instructions)
-                    self.assertNotIn('dispatch_task', a.instructions)
-                    self.assertNotIn('/task check', b.instructions)
-                    self.assertIsNone(b.grant)
                     self.assertNotEqual(a.key, b.key)
                 finally:
                     bridge.db.close()
@@ -53,7 +48,7 @@ class MessagePolicyTests(unittest.TestCase):
                     self.assertEqual((a.level,a.model),('full','grok-4.7'))
                     self.assertEqual((g.level,g.model),('none','haiku'))
                     self.assertIn('owner-private-canary',a.instructions);self.assertNotIn('owner-private-canary',g.instructions)
-                    self.assertEqual(b.agent_for(guest).name,'guest');self.assertIsNone(g.grant)
+                    self.assertEqual(b.agent_for(guest).name,'guest')
                 finally:b.db.close()
         asyncio.run(check())
 

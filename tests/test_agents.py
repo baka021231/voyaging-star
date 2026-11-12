@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from qq_chat.agents import Agent, CHAT, FULL, NONE, TurnRequest, build_agents
+from qq_chat.agents import Agent, FULL, NONE, TurnRequest, build_agents
 from qq_chat.agents.base import MAX_REPLY, Interrupted
 from qq_chat.agents.codex import CodexAgent
 from qq_chat.bridge import Bridge, Incoming, Source
@@ -104,7 +104,6 @@ class AgentBridgeTests(unittest.IsolatedAsyncioTestCase):
         for source in sources:
             await self.bridge.chat(source, 'hello', image_paths=('picture.png',))
         self.assertEqual([req.level for req in self.fake.requests], [FULL, FULL, NONE, NONE])
-        self.assertEqual([req.role for req in self.fake.requests], [CHAT] * 4)
         self.assertEqual([req.key for req in self.fake.requests],
                          ['private:10001', 'group:20001:owner', 'group:20001', 'private:30001'])
         for index, req in enumerate(self.fake.requests):
@@ -181,7 +180,7 @@ class CodexAdapterTests(unittest.IsolatedAsyncioTestCase):
                 return 'ok'
         agent = CodexAgent(self.db, '/unused', 'unused', app=Transport())
         for marker in ('first-current-grant', 'second-current-grant'):
-            await agent.run(TurnRequest('key', 'user text', CHAT, FULL, 'stale thread instructions',
+            await agent.run(TurnRequest('key', 'user text', FULL, 'stale thread instructions',
                                        session_id='loaded-thread', runtime_instructions=marker))
         self.assertEqual([c[0] for c in calls], ['thread/inject_items', 'turn'] * 2)
         for index, marker in ((0, 'first-current-grant'), (2, 'second-current-grant')):
@@ -197,7 +196,7 @@ class CodexAdapterTests(unittest.IsolatedAsyncioTestCase):
                 raise AssertionError('must not start')
         agent = CodexAgent(self.db, '/unused', 'unused', app=Transport())
         with self.assertRaisesRegex(RuntimeError, 'injection failed'):
-            await agent.run(TurnRequest('key', 'text', CHAT, FULL, '', session_id='loaded',
+            await agent.run(TurnRequest('key', 'text', FULL, '', session_id='loaded',
                                        runtime_instructions='current'))
 
     async def test_cap_only_return_value_and_preserve_explicit_none_effort(self):
@@ -211,7 +210,7 @@ class CodexAdapterTests(unittest.IsolatedAsyncioTestCase):
                 return full
 
         agent = CodexAgent(self.db, '/unused', 'unused', app=Transport())
-        req = TurnRequest('private:10001', 'hello', CHAT, FULL, '',
+        req = TurnRequest('private:10001', 'hello', FULL, '',
                           model='chosen', effort=None, session_id='thread', on_answer=streamed.append)
         self.assertEqual(len(await agent.run(req)), MAX_REPLY)
         self.assertEqual(len(streamed[0]), MAX_REPLY + 100)
@@ -250,38 +249,7 @@ class CodexAdapterTests(unittest.IsolatedAsyncioTestCase):
             agent = CodexAgent(self.db, '/unused', 'unused', app=app)
             expected = Interrupted if status == 'interrupted' else RuntimeError
             with self.assertRaises(expected):
-                await agent.run(TurnRequest('key', 'text', CHAT, FULL, '', session_id='thread'))
-
-    async def test_task_thread_is_persistent_and_does_not_replace_chat_session(self):
-        calls = []
-        class Transport:
-            async def start(self): pass
-            async def call(self, method, params):
-                calls.append((method, params))
-                return {'thread': {'id': 'task-thread'}, 'model': 'actual', 'reasoningEffort': 'medium'}
-        self.db.execute('INSERT INTO threads VALUES (?,?)', ('private:10001', 'chat-thread'))
-        agent = CodexAgent(self.db, '/unused', 'unused', app=Transport())
-        from qq_chat.agents.base import TASK
-        thread = await agent.prepare(TurnRequest('task:1', 'goal', TASK, FULL, 'worker rules'))
-        self.assertEqual(thread, 'task-thread')
-        self.assertEqual(agent.session_id('task:1'), 'task-thread')
-        self.assertEqual(agent.session_id('private:10001'), 'chat-thread')
-        self.assertEqual(self.db.execute('SELECT count(*) FROM threads').fetchone()[0], 1)
-        self.assertFalse(calls[-1][1]['ephemeral'])
-
-    async def test_check_execution_is_one_read_and_rejects_ambiguous_turns(self):
-        calls = []
-        turns = [{'id': 't1', 'status': 'inProgress'}]
-        class Transport:
-            async def start(self): pass
-            async def call(self, method, params):
-                calls.append((method, params)); return {'thread': {'turns': list(turns)}}
-        agent = CodexAgent(self.db, '/unused', 'unused', app=Transport())
-        self.assertEqual(await agent.check_execution('task-session'), 'inProgress')
-        self.assertEqual(calls, [('thread/read', {'threadId': 'task-session', 'includeTurns': True})])
-        turns.append({'id': 't2', 'status': 'completed'})
-        self.assertEqual(await agent.check_execution('task-session'), 'unknown')
-        self.assertEqual(await agent.check_execution('task-session', {'turn_id': 't2'}), 'completed')
+                await agent.run(TurnRequest('key', 'text', FULL, '', session_id='thread'))
 
     async def test_interrupt_uses_only_active_thread_and_turn(self):
         app = AppServer('unused'); calls = []

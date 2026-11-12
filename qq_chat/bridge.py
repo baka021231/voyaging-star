@@ -13,11 +13,10 @@ import time
 import uuid
 from . import prompts
 from .front_switch import command as switch_front_command
-from .agents import CHAT, FULL, NONE, TurnRequest, build_agents
-from .agents.base import MissingSession, Interrupted, FRONT
+from .agents import FULL, NONE, TurnRequest, build_agents
+from .agents.base import MissingSession, Interrupted
 from .tool_server import SPEAK, ToolServer
-from .tasks import TaskManager
-from .task_commands import TaskCommands, serialized
+from .turns import Turns, serialized
 from .agents.config import legacy_codex_profile, settings
 from .agents.state import AgentState, recent_history
 from .files import MAX_FILE_BYTES, save_attachment
@@ -43,7 +42,7 @@ REFERENCE_REFRESH_TIMEOUT = 5
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 
-class Bridge(TaskCommands):
+class Bridge(Turns):
     def blocked(self, source):
         return blocked_group_sender(source, self.cfg)
 
@@ -106,9 +105,7 @@ class Bridge(TaskCommands):
                                        {name: profile['type'] for name, profile in profiles.items()})
         self.agents = build_agents(cfg, self.db, BASE / "workspace")
         self._history_replies = {}
-        self.tasks = TaskManager(self, BASE)
         self.tool_server = ToolServer(self, BASE)
-        self._front_grants = {}
         self._memory_grants = {}
         self._active_front = {}
 
@@ -369,16 +366,10 @@ class Bridge(TaskCommands):
         selection = self.selection(source)
         profile = getattr(self.agent_for(source), 'profile', {})
         request = TurnRequest(
-            key=self.conversation(source), text=text, role=CHAT,
-            level=FULL if authorized and not self.cfg.get('agents', {}).get('back') else NONE,
+            key=self.conversation(source), text=text, level=FULL if authorized else NONE,
             instructions=await self.instructions(authorized, group_moderation=source.kind == 'group'),
             model=selection[0] if selection else profile.get('model'),
             effort=selection[1] if selection else profile.get('effort'))
-        if authorized and self.cfg.get('agents', {}).get('back'):
-            grant = self.__dict__.get('_front_grants', {}).get(request.key)
-            request.level = FRONT if grant is not None else NONE
-            request.grant = grant
-            request.instructions += '\n' + (prompts.FRONT_DESK_TOOLS if grant is not None else prompts.FRONT_DESK)
         request.runtime_instructions = ('本轮未提供终端记忆检索授权。'
                                         '不要复用历史轮次的 memory_search 命令或授权路径。')
         if source.kind == 'group' and not authorized:
@@ -417,7 +408,7 @@ class Bridge(TaskCommands):
             speak_instructions += prompts.SPEAK_RULES + '授权仅本轮有效。'
             if not authorized:
                 speak_instructions += ('主人已开放群聊语音；群友想听时直接调用本轮语音工具，无需逐次确认。'
-                                       '这是文字聊天限制的唯一例外；不允许其他命令、文件读取、私人记忆或后台任务。')
+                                       '这是文字聊天限制的唯一例外；不允许其他命令、文件读取或私人记忆。')
             request.instructions += speak_instructions
             request.runtime_instructions += '\n以下语音指令仅适用于当前轮。' + speak_instructions
         if self.voice_only(source) and speak_granted:
@@ -602,25 +593,13 @@ class Bridge(TaskCommands):
     @serialized
     async def chat(self, source, text, context_id=None, image_paths=()):
         agent = self.agent_for(source)
-        config = self.cfg.get('agents', {})
-        profile = config.get('profiles', {}).get(config.get('front'), {})
         server = getattr(self, 'tool_server', None)
-        if (owner_request(source, self.cfg['owner_qq']) and config.get('back')
-                and profile.get('type') == 'claude_code' and server and server.server is not None):
-            async with server.grant(source) as grant:
-                self._front_grants[self.conversation(source)] = grant
-                try:
-                    async with self.front_execution(source, agent):
-                        return await self._chat(source, text, context_id, image_paths)
-                finally:
-                    self._front_grants.pop(self.conversation(source), None)
         names = [name for name, on in (('memory_search', self.cfg.get('memory', {}).get('enabled', True)),
                                        (SPEAK, self.speak_enabled())) if on]
         owner = owner_request(source, self.cfg['owner_qq'])
         if not owner:
             names = [SPEAK] if self.group_speak_enabled(source) else []
-        if ((owner and not config.get('back') or not owner and self.group_speak_enabled(source))
-                and names and server and server.server is not None):
+        if names and server and server.server is not None:
             async with server.grant(source, names=names) as grant:
                 key = self.conversation(source)
                 self._memory_grants[key] = grant
@@ -678,13 +657,11 @@ class Bridge(TaskCommands):
                 if is_voice_command(text):
                     await self.voice_command(source, text)
                     continue
-                if head in ('/stop', '/tasks'):
-                    await self.fast_command(source, text)
+                if head == '/stop':
+                    await self.stop_command(source, text)
                     continue
                 if head == '/front':
                     await self.front_command(source, text)
-                    continue
-                if head == '/task' and not owner_request(source, self.cfg['owner_qq']):
                     continue
                 if self.blocked(source):
                     continue
@@ -706,9 +683,6 @@ class Bridge(TaskCommands):
                     except (RuntimeError, OSError, ValueError, sqlite3.Error, asyncio.TimeoutError):
                         logging.warning('Model management failed')
                         await self.send(source, '模型操作未完成，请稍后重试；用 /model 或 /effort 可重新检查当前状态。')
-                    continue
-                if head == '/task':
-                    await self.task_command(source, text)
                     continue
                 reference_records, reference_images = [], ()
                 if incoming.references:
@@ -756,9 +730,7 @@ class Bridge(TaskCommands):
                     self.db.execute("DELETE FROM history WHERE conversation=?", (self.conversation(source),))
                     self.reset_group_context(source, incoming.context_id)
                     self.db.commit()
-                    count = len(self.tasks.list(self.conversation(source), live=True)) if hasattr(self, 'tasks') else 0
-                    notice = f'仍有 {count} 个后台任务未结算，结果会回到新会话。' if count else ''
-                    await self.send(source, '已清空聊天上下文，可以开始新话题。' + notice)
+                    await self.send(source, '已清空聊天上下文，可以开始新话题。')
                 elif text == "/session":
                     thread = self.agent_for(source).session_id(self.conversation(source))
                     await self.send(source, "当前会话：" + (thread if thread else "尚未创建；发送一条消息即可创建。"))
@@ -777,7 +749,7 @@ class Bridge(TaskCommands):
                         continue
                     await self.send(source, '已加入群聊用户黑名单。' if parts[0] == '/block' else '已解除群聊用户拉黑。')
                 elif text == "/help":
-                    await self.send(source, "Aemeath：主人在私聊或群聊可请求Linux操作，其他人仅文字聊天；Windows文件只读。群聊可单独@机器人，或喊Aemeath、爱弥斯、ams、小爱（英文不分大小写）。图片识别向群友和主人开放，每条最多5张、每张20 MiB，支持PNG、JPEG、WebP、GIF。文件附件仅主人私聊接收。/ping、/help 所有人可用；/voice on 开启主人私聊仅语音、/voice off 或“切回文字”关闭、/voice 查看状态；/new 创建新会话、/session 查看会话ID、/models 查看可选模型、/model 查看当前模型、/model 模型名 切换、/model default 恢复默认、/front 查看前台、/front 配置名 切换主人前台并自动重启（所有主人会话生效，访客不变）、/effort 查看强度、/effort 档位 切换强度、/effort default 恢复模型默认强度、/task 完整目标 手动交给后台、/task check 编号 只查一次执行状态、/task release 编号 人工释放待确认任务、/tasks 查看当前会话任务、/stop 停前台、/stop 编号 停任务、/stop all 停本会话全部后台任务、/blacklist 查看群聊用户黑名单、/block QQ号 拉黑、/unblock QQ号 解除拉黑仅限主人。黑名单用户的群消息静默忽略。")
+                    await self.send(source, "Aemeath：主人在私聊或群聊可请求Linux操作，其他人仅文字聊天；Windows文件只读。群聊可单独@机器人，或喊Aemeath、爱弥斯、ams、小爱（英文不分大小写）。图片识别向群友和主人开放，每条最多5张、每张20 MiB，支持PNG、JPEG、WebP、GIF。文件附件仅主人私聊接收。/ping、/help 所有人可用；/voice on 开启主人私聊仅语音、/voice off 或“切回文字”关闭、/voice 查看状态；/new 创建新会话、/session 查看会话ID、/models 查看可选模型、/model 查看当前模型、/model 模型名 切换、/model default 恢复默认、/front 查看主人用的 agent、/front 配置名 切换并自动重启（所有主人会话生效，访客不变）、/effort 查看强度、/effort 档位 切换强度、/effort default 恢复模型默认强度、/stop 停止当前这一轮、/blacklist 查看群聊用户黑名单、/block QQ号 拉黑、/unblock QQ号 解除拉黑仅限主人。黑名单用户的群消息静默忽略。")
                 elif len(text) > 6000:
                     await self.send(source, "这条消息较长，请拆成每条不超过6000字。")
                 else:
@@ -812,7 +784,6 @@ class Bridge(TaskCommands):
             self.voice.warm()
         worker = asyncio.create_task(self.worker())
         controls = set()
-        reports = asyncio.create_task(self.flush_task_reports()) if hasattr(self, 'tasks') else None
         try:
             async for payload in ws:
                 event = json.loads(payload)
@@ -859,9 +830,9 @@ class Bridge(TaskCommands):
                     controls.add(control)
                     control.add_done_callback(controls.discard)
                     continue
-                if head in ('/stop', '/tasks'):
+                if head == '/stop':
                     if owner_request(incoming.source, self.cfg['owner_qq']):
-                        control = asyncio.create_task(self.fast_command(incoming.source, incoming.text))
+                        control = asyncio.create_task(self.stop_command(incoming.source, incoming.text))
                         controls.add(control)
                         control.add_done_callback(controls.discard)
                     continue
@@ -875,9 +846,6 @@ class Bridge(TaskCommands):
             for control in controls:
                 control.cancel()
             await asyncio.gather(*controls, return_exceptions=True)
-            if reports:
-                reports.cancel()
-                await asyncio.gather(reports, return_exceptions=True)
             worker.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await worker
@@ -892,11 +860,9 @@ class Bridge(TaskCommands):
     async def run(self):
         front, guest, _ = settings(self.cfg)
         config = self.cfg.get('agents', {})
-        for name in dict.fromkeys((front, guest, config.get('group_guest', guest), *config.get('back', []))):
+        for name in dict.fromkeys((front, guest, config.get('group_guest', guest))):
             await self.agents[name].start()
-        await self.tasks.recover_after_restart()
-        if (self.cfg.get('agents', {}).get('back')
-                or self.cfg.get('memory', {}).get('enabled', True) or self.speak_enabled()):
+        if self.cfg.get('memory', {}).get('enabled', True) or self.speak_enabled():
             await self.tool_server.start()
         logging.info("App Server initialized")
         while True:

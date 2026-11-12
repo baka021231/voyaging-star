@@ -91,15 +91,10 @@ class DiaryTests(unittest.TestCase):
         self.assertFalse(self.dest.exists())
 
 
-from tests import test_front_tools as ft
+from tests.support import BridgeCase
 
 
-class DiaryToolTests(unittest.IsolatedAsyncioTestCase):
-    asyncSetUp = ft.FrontToolsTests.asyncSetUp
-    asyncTearDown = ft.FrontToolsTests.asyncTearDown
-    setup_tools = ft.FrontToolsTests.setup_tools
-    token = ft.FrontToolsTests.token
-
+class DiaryToolTests(BridgeCase):
     async def test_service_reads_new_diary_without_copy_or_lock(self):
         server = await self.setup_tools()
         diary = self.root/'workspace/memory/private/diary/our-story/2026-10/2026-10-28.md'

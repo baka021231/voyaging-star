@@ -2,7 +2,7 @@
 import json
 import logging
 
-from .front_switch import atomic_json, config_lock
+from .config_file import atomic_json, config_lock
 from .message_policy import owner_request
 
 
@@ -35,7 +35,7 @@ async def command(bridge, source, text, root):
         await bridge.send(source, '语音服务尚未启用，暂不能开启仅语音。文字回复保留。')
         return
     try:
-        # Merge under the same lock as frontend/blacklist writers; keep unrelated settings.
+        # Merge under the same lock as the other config writers; keep unrelated settings.
         with config_lock(root):
             path = root / 'config.json'
             cfg = json.loads(path.read_text())

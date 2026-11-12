@@ -1,5 +1,18 @@
 # 变更记录
 
+## 2026-11-13
+
+### 删除前后台分离的代码
+
+主人决定删除（见 `DECISIONS.md` 的 P01）。分两个提交：先搬家，再删除。
+
+- **搬家，不改行为**：会话锁、`/stop` 停当前轮和 `deliver` 每条消息都要用，却放在 `task_commands.py` 里，现在搬到 `qq_chat/turns.py`；`/voice` 写配置用的两个函数从 `front_switch.py` 搬到 `qq_chat/config_file.py`；speak、记忆、日记测试借用的准备代码独立成 `tests/support.py`。
+- **删除**：`tasks.py`、`task_commands.py`、`front_tools.py`、`config.front-back.example.json`；`tool_server.py` 里的派发、查询、停止、追加和拍一拍；Claude 适配器的 FRONT 级别；`TurnRequest` 的 `role`、`grant`、`on_runtime`；对应的提示词、配置校验和测试。`qq_chat` 约少 690 行（5,238 → 4,550），测试约少 460 行。
+- **看得见的变化**：`/task`、`/tasks`、`/stop 编号`、`/stop all` 没有了，`/stop` 保留，提示里的“前台轮次”改成“这一轮”；配置里 `agents.back` 非空会在启动时报错；日志里的 `Front tool ...` 改为 `Tool ...`；拍一拍工具没有了。
+- **不变的**：speak 和记忆检索的授权文件格式、Claude 访客和 Grok、`/front`、数据库里的旧任务记录和 `workspace/tasks/` 的报告。
+- 原来保护现役功能的测试（会话串行、`/stop`、工具授权）改写进 `tests/test_turns.py` 和 `tests/test_tool_server.py`。
+- 删除前的代码在 git 标签 `before-front-back-removal`。
+
 ## 2026-11-12
 
 ### 补记前后台分离的回退，更新过时的文档

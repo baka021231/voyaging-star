@@ -1,42 +1,17 @@
-"""Owner control plane for persistent frontend changes, independent of model turns."""
+"""/front: change which agent profile serves the owner, independent of model turns."""
 import asyncio
-from contextlib import contextmanager
 from datetime import datetime
-import fcntl
 import json
 import logging
 import os
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
 import time
 import uuid
 
 from .agents.config import settings
-
-
-def atomic_json(path, value):
-    fd, temporary = tempfile.mkstemp(prefix='.switch-', dir=path.parent)
-    try:
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, 'w') as out:
-            json.dump(value, out, ensure_ascii=False, indent=2)
-            out.write('\n')
-            out.flush()
-            os.fsync(out.fileno())
-        os.replace(temporary, path)
-    finally:
-        Path(temporary).unlink(missing_ok=True)
-
-
-@contextmanager
-def config_lock(root):
-    # Share the moderation writer's lock so blacklist changes are not lost.
-    fd = os.open(root / '.group-blacklist.lock', os.O_WRONLY | os.O_CREAT, 0o600)
-    with os.fdopen(fd, 'w') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        yield
+from .config_file import atomic_json, config_lock
 
 
 def changed_config(cfg, target):
@@ -45,7 +20,7 @@ def changed_config(cfg, target):
         raise ValueError('未知前台配置，请用 /front 查看可选项。')
     new = json.loads(json.dumps(cfg))
     if 'agents' not in new:
-        new['agents'] = {'front': front, 'guest': guest, 'profiles': profiles, 'back': []}
+        new['agents'] = {'front': front, 'guest': guest, 'profiles': profiles}
     # Pin the previous guest when an older config used the front as its default.
     new['agents'].setdefault('guest', guest)
     new['agents']['front'] = target

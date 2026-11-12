@@ -18,7 +18,7 @@ from tests.test_agents import FakeAgent
 
 def configuration():
     return {'owner_qq': 10001, 'agents': {
-        'front': 'claude', 'guest': 'guest', 'back': [], 'profiles': {
+        'front': 'claude', 'guest': 'guest', 'profiles': {
             'claude': {'type': 'claude_code', 'path': '/usr/bin/python3', 'model': 'sonnet',
                        'models': ['sonnet', 'haiku'], 'permission_mode': 'dontAsk'},
             'guest': {'type': 'claude_code', 'path': '/usr/bin/python3', 'model': 'haiku', 'models': ['haiku']},
@@ -147,7 +147,6 @@ class ProfileBridgeTests(unittest.IsolatedAsyncioTestCase):
         await self.bridge.chat(Source('group',20001,30001),'group guest')
         self.assertEqual(codex.requests[-1].level,'none')
         self.assertNotIn('owner-private-canary',codex.requests[-1].instructions)
-        self.assertIsNone(codex.requests[-1].grant)
         await self.bridge.chat(Source('private',30001,30001),'private guest')
         self.assertEqual(self.guest.requests[-1].model,'haiku')
         await self.bridge.chat(Source('group',20001,10001),'group owner')

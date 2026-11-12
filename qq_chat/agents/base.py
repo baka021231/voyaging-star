@@ -3,8 +3,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Callable
 
-NONE, FRONT, FULL = 'none', 'front', 'full'
-CHAT, TASK = 'chat', 'task'
+NONE, FULL = 'none', 'full'
 MAX_REPLY = 12000
 
 
@@ -24,7 +23,6 @@ class MissingSession(RuntimeError):
 class TurnRequest:
     key: str
     text: str
-    role: str
     level: str
     instructions: str
     images: tuple = ()
@@ -32,12 +30,10 @@ class TurnRequest:
     effort: str | None = None
     on_progress: Callable[[str], None] | None = None
     on_answer: Callable[[str], None] | None = None
-    grant: object | None = None
     # Bridge prepares a session before composing its legacy history input.
     session_id: str | None = None
     show_tools: bool = False
     history_text: str | None = None
-    on_runtime: Callable[[dict], None] | None = None
     on_activity: Callable[[dict], None] | None = None
     # Trusted per-turn context, separate from thread configuration/history.
     runtime_instructions: str = ''
