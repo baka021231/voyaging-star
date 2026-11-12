@@ -111,6 +111,9 @@ class PrivateSpeakTests(unittest.IsolatedAsyncioTestCase):
         source = Source('private', self.cfg['owner_qq'], self.cfg['owner_qq'])
         reply, streamed = await self.bridge.chat(source, '你好')
         self.assertIn('每轮都调用 speak', self.front.requests[-1].runtime_instructions)
+        # Every turn is told the time, so she does not spend a step running `date` before speaking.
+        self.assertRegex(self.front.requests[-1].runtime_instructions.splitlines()[0],
+                         r'^现在是 \d{4}年\d{1,2}月\d{1,2}日 星期[一二三四五六日] \d\d:\d\d')
         await self.bridge.deliver(source, reply, '你好', streamed=streamed)
         await asyncio.wait_for(self.bridge.voice.queue.join(), 2)
         self.assertEqual(len(self.calls), 1)

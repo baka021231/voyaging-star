@@ -65,14 +65,17 @@ class IndexProtocolTests(unittest.TestCase):
         carry = Continuity()
         self.assertIsNone(carry.previous('a', 0))
         carry.remember('a', 10.0, 2000.0, 0)
-        self.assertEqual(carry.previous('a', 599), (10.0, 2000.0))
+        self.assertEqual(carry.previous('a', 59), (10.0, 2000.0))
         self.assertIsNone(carry.previous('b', 1))  # chats do not share a state
         # 60% of the new line's own emotion, 40% of what was last spoken; each step starts from the last result.
         second = carry.blend(20.0, 10.0)
         self.assertAlmostEqual(second, 16.0)
         carry.remember('a', second, 2000.0, 100)
         self.assertAlmostEqual(carry.blend(0.0, carry.previous('a', 101)[0]), 6.4)
-        self.assertIsNone(carry.previous('a', 100 + Continuity.TTL + 1))  # quiet for over ten minutes: start afresh
+        self.assertIsNone(carry.previous('a', 100 + Continuity.WINDOW + 1))  # quiet for over a minute: start afresh
+        slow = Continuity(600)
+        slow.remember('a', 1.0, 1.0, 0)
+        self.assertEqual(slow.previous('a', 599), (1.0, 1.0))  # the window is a setting
         carry.remember('a', 1.0, 1.0, 0)
         carry.forget('a')
         self.assertIsNone(carry.previous('a', 1))

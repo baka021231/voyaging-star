@@ -1,4 +1,5 @@
 """Model-facing prompt text. The bridge supplies the variable parts."""
+from datetime import datetime
 import json
 from .moderation import BLOCK_SENDER
 
@@ -112,6 +113,16 @@ IMAGE_ONLY = (
     "不必逐项描述画面，也不要默认分析用户的情绪或意图。用户明确要求描述、识字或分析时，再按要求回答；"
     "看不清或不确定的内容不要猜。"
 )
+
+
+WEEKDAYS = '一二三四五六日'
+
+
+def current_time(now=None):
+    """The local date and time for this turn, so she need not run `date` first (each extra step costs ~10 s)."""
+    now = now or datetime.now().astimezone()
+    return (f'现在是 {now.year}年{now.month}月{now.day}日 星期{WEEKDAYS[now.weekday()]} '
+            f'{now:%H:%M}（本机时间），本轮需要时间时直接用它，不用再查。')
 
 
 def _json(value):
