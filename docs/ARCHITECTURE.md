@@ -31,7 +31,11 @@ NapCat ◀──WebSocket── Bridge.send()  全局锁，间隔随机 2～3 �
 
 | 模块 | 职责 | 包内依赖 |
 | --- | --- | --- |
-| `bridge.py` | `main()` 入口与 `Bridge` 类：OneBot 收发、命令、会话、调度及功能编排 | 消息策略、Agent、轮次、工具、媒体等 |
+| `bridge.py` | `main()` 入口与 `Bridge` 类：权限与语音开关的判断、一轮对话的组装和运行、`session()`（收）和 `worker()`（答）两个循环。其余职责由下面五个模块提供，`Bridge` 继承它们 | 下列全部 |
+| `onebot.py` | `OneBot`：经 NapCat 发文字和语音、调用 OneBot 接口；所有发送共用一个限速 | `voice` |
+| `store.py` | `open_database()` 建表与迁移；`Store`：消息去重、群聊参考记录与增量游标、首轮历史导入 | `prompts`、`agents.state`、`message_policy` |
+| `media.py` | `Media`：接收附件、图片和引用里的参考图片（含整组时间预算） | `files`、`images`、`prompts`、`message_policy` |
+| `commands.py` | `Commands`：不经过模型的命令（`/ping`、`/new`、`/session`、黑名单、`/help`、模型与强度）和 `/help` 文字 | `turns`、`message_policy` |
 | `message_policy.py` | `Source` / `Incoming`、事件解析、主人判断、会话键及发言人标签；不访问 Bridge 状态 | `message_text`、`message_references`、`moderation` |
 | `codex_app.py` | `AppServer`：JSON-RPC 客户端、单轮对话事件处理；`progress_text` 生成进度文本、传递执行活动事件 | `agents.base`、`memory_progress` |
 | `agents/base.py` | `Agent`、`TurnRequest`、权限级别常量和返回值上限；不负责 QQ 策略 | 无 |
@@ -46,7 +50,7 @@ NapCat ◀──WebSocket── Bridge.send()  全局锁，间隔随机 2～3 �
 | `memory.py` | 在可信范围目录内做有预算的关键词检索，直接返回来源片段 | 标准库 |
 | `memory_progress.py` | 识别直接记忆查询，按真实 Codex 活动事件缓冲/释放进度 | 标准库 |
 | `turns.py` | `Turns`（`Bridge` 的基类）：会话锁、`/stop` 停当前轮、把回复发出去并写入历史的 `deliver`；每条消息都经过 | `agents.base`、`message_policy` |
-| `prompts.py` | 公共权限/角色提示词与历史拼接；本轮记忆命令说明由 Bridge 补入 | `moderation` |
+| `prompts.py` | 公共权限/角色提示词与历史拼接；每轮的记忆、语音工具说明文字也在这里，由 `Bridge.turn_request` 决定用哪几段 | `moderation` |
 | `message_text.py` / `message_references.py` | 消息文字与 @ 标签；引用、合并转发的受限展开 | `message_references` → `message_text` |
 | `front_switch.py` | `/front`：换主人用哪个 agent，备份配置、独立重启并通知结果 | `agents.config`、`config_file` |
 | `config_file.py` | 运行中安全改写 `config.json`：文件锁与原子替换，`/front`、`/voice` 共用 | 标准库 |
@@ -62,25 +66,28 @@ NapCat ◀──WebSocket── Bridge.send()  全局锁，间隔随机 2～3 �
 
 ## `bridge.py` 的结构
 
-- **消息基础层**（`message_policy.py`）：`incoming_text()` 把 OneBot 事件转成 `Incoming` 或丢弃；`owner_request()` 判断权限；`image_request()` 判断图片接收范围；`conversation_key()` 决定会话键；`speaker_message()` 生成发言人标签。这些函数不涉及 I/O，可以直接测试。`bridge.py` 保留原名字的导入兼容；新代码直接从 `message_policy` 导入。任务和工具模块也直接引用基础层，不反向导入 `bridge`。
-- **`Bridge` 的方法**，按职责分组：
-  - 存储：`__init__`（建表与迁移）、`remember_group`、`group_reference`
-  - OneBot 收发：`send` / `_send`、`onebot_call`、`session`、`run`
-  - 媒体：`receive_attachments`、`receive_images`
-  - Agent 编排：`instructions`、`turn_request`、`thread_for`、`turn_text`、`run_turn`、`relay_progress`、`relay_answer`、`chat`
-  - 调度：`worker`
+- **消息基础层**（`message_policy.py`）：`incoming_text()` 把 OneBot 事件转成 `Incoming` 或丢弃；`owner_request()` 判断权限；`image_request()` 判断图片接收范围；`conversation_key()` 决定会话键；`speaker_message()` 生成发言人标签。这些函数不涉及 I/O，可以直接测试。`bridge.py` 保留原名字的导入兼容；新代码直接从 `message_policy` 导入。
+- **`Bridge` 自己的方法**（`bridge.py`，约 530 行）：
+  - 判断：`blocked` / `block_user` / `auto_block`、`conversation`、`agent_for`、`speak_enabled` / `voice_only` 等语音开关
+  - 一轮对话：`instructions`、`turn_request`、`run_turn`、`relay_progress`、`relay_answer`、`chat` / `_chat`
+  - 两个循环：`session`（接收、过滤、去重、不排队的控制命令）、`worker`（逐条处理）、`run`（启动与重连）
+- **`Bridge` 继承来的方法**：`OneBot`（`send`、`send_audio`、`onebot_call`）、`Store`（`first_delivery`、`remember_group`、`group_reference`、`turn_text`）、`Media`（`receive_attachments`、`receive_images`、`receive_reference_images`）、`Commands`（`plain_command`、`model_commands`）、`Turns`（`conversation_lock`、`stop_command`、`deliver`）。
 
-## 后续结构整理顺序
+## 这次拆分做到了什么，没做到什么
 
-本轮先拆出消息基础层，保持原有判断和事件格式。其余部分仍由 `Bridge` 编排，不把依赖注入的 Bridge 对象误认为模块之间已完全解耦。
+2026-11-13 把 `bridge.py` 从 885 行拆到约 530 行，方法原样搬到上面五个模块。
 
-后续可按以下顺序逐步整理，每步独立验证：
+这是**分文件，不是解耦**：五个类都靠 `self` 读写同一个 `Bridge` 对象（`self.cfg`、`self.db`、`self.send` 等），各类开头的说明写了它需要什么。好处是每个文件只讲一件事，改发送不用读命令，改命令不用读图片；测试里 `bridge.send = ...` 这类替换照常可用。没有解决的是：它们不能脱离 `Bridge` 单独构造和测试。
 
-1. OneBot 传输：收发、调用回执、连接生命周期和发送限速；保留现有超时与重连行为。
-2. 会话存储：建表迁移、历史和群聊增量游标；先明确事务归属，再移动数据库访问。
-3. 命令处理：将模型、强度等命令与对话运行分开；继续以真实事件身份做权限判断。
+需要在 `bridge.py` 里读 `BASE` 的方法（人设文件、配置路径、工具命令路径）留在了 `bridge.py`，因为测试用 `patch('qq_chat.bridge.BASE', ...)` 换目录。
 
-暂不为目录整齐批量移动文件，也不同时改写 worker、权限规则和数据库事务。现有离线测试使用 `python3 -m unittest discover -s tests -q`；涉及权限边界的改动须覆盖命令授权、消息策略、轮次和工具授权测试。
+还可以继续的方向，每步独立验证：
+
+1. `worker()` 仍有约 90 行，引用展开、附件、图片的接收顺序都在里面。
+2. `run_turn()` 的进度和回答转发可以独立成一个小对象。
+3. 要真正解耦，从 `OneBot` 开始最合适：它只需要一个 socket、限速状态和“是否被拉黑”的判断。
+
+不同时改写 worker、权限规则和数据库事务。离线测试使用 `python3 -m unittest discover -s tests -q`；涉及权限边界的改动须覆盖命令授权、消息策略、轮次和工具授权测试。
 
 ## 权限模型
 
@@ -131,7 +138,7 @@ NapCat ◀──WebSocket── Bridge.send()  全局锁，间隔随机 2～3 �
 | `history` | 成功交付的问答记录；新会话补入有预算的最近历史，/new 删除本会话记录；不是长期记忆档案 |
 | `group_context` | 每群最近 100 条文字消息 |
 
-建表和字段迁移写在 `Bridge.__init__`，用 `CREATE TABLE IF NOT EXISTS`。新增表或字段时沿用这个方式，旧数据库可以直接升级。
+建表和字段迁移写在 `store.open_database()`，用 `CREATE TABLE IF NOT EXISTS`。新增表或字段时沿用这个方式，旧数据库可以直接升级。
 
 ## 外部依赖
 
@@ -158,8 +165,8 @@ Claude 工具列表未校验通过前不接受回复；完整聚合顶层 assist
 
 模型管理由 `Bridge.model_command()` 执行，worker 先检查主人权限，处理函数再次检查。命令验证 agent 返回的目录后保存选择；`CodexAgent.prepare()` 在创建/恢复时传入选择，`run_turn()` 还会通过请求在每次 `turn/start` 明确传入所选模型及推理强度，避免已加载线程忽略恢复覆盖。Codex 适配器缓存接口返回的实际模型状态；Claude 在首次 init 前仅有配置别名，之后缓存实际返回型号，未设置偏好时用于显示；已设置时显示下一轮使用的型号，不把尚未生成的选择冒充为已完成的切换。空线程可能尚无 rollout，遇到该特定错误时重建映射，历史表不清空。
 
-- **加一个命令**：在 `worker()` 的 if/elif 中加一个分支。默认只有主人可用；如果要对所有人开放，把命令加进开头的白名单元组 `('/ping', '/help')`。同时在 `/help` 文字和 `docs/FEATURES.md` 的命令表里补上，并在 `tests/test_command_auth.py` 加测试。
-- **改提示词**：改 `prompts.py`。桥接注入的人设放入 `workspace/SOUL.md`，主人资料放入 `workspace/OWNER.md`；开发规则留在 Codex 原生加载的 `workspace/AGENTS.md`。文件不自动迁移，均属本地忽略文件。
+- **加一个命令**：不经过模型的命令加在 `commands.py` 的 `plain_command()` 里。默认只有主人可用；如果要对所有人开放，把命令加进 `worker()` 开头的白名单元组 `('/ping', '/help')`。要在她忙的时候也能响应（像 `/stop`），则在 `session()` 里分发。同时在 `/help` 文字和 `docs/FEATURES.md` 的命令表里补上，并在 `tests/test_command_auth.py` 加测试。
+- **改提示词**：改 `prompts.py`，包括每轮的记忆和语音工具说明。桥接注入的人设放入 `workspace/SOUL.md`，主人资料放入 `workspace/OWNER.md`；开发规则留在 Codex 原生加载的 `workspace/AGENTS.md`。文件不自动迁移，均属本地忽略文件。
 - **加配置项**：用 `self.cfg.get('key', 默认值)` 读取，让旧配置文件也能工作；同时更新 `config.example.json` 和 README 的配置表。
 - **加一种消息类型**：在 `incoming_text()` 中解析，在 `Incoming` 中加字段，在 `worker()` 中处理。
 
@@ -175,6 +182,8 @@ python3 -m unittest discover -s tests -v
 - 把 `bridge.agents['codex']` 换成 `FakeAgent`，记录 `TurnRequest` 并用事件控制运行/失败；需要检查底层 JSON-RPC 参数时，把 `bridge.agents['codex'].app` 换成假的 App Server 对象。
 - 把 `bridge.send` 换成记录发送内容的函数。
 - 需要文件系统时，用 `patch('qq_chat.bridge.BASE', 临时目录)`。
+- 替换模块级函数时按它现在所在的模块写，例如 `patch('qq_chat.media.save_image')`、`patch('qq_chat.onebot.random.uniform')`。
+- 需要一个带假 agent 的完整 `Bridge`，继承 `tests/support.py` 的 `BridgeCase`。
 
 ## 开发约定
 

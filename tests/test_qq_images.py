@@ -108,12 +108,12 @@ class ImageTests(unittest.TestCase):
             bridge.onebot_call = onebot
             own = Source('private', 123, 123)
             image = {'file': 'pic', 'url': 'https://gchat.qpic.cn/a'}
-            with patch('qq_chat.bridge.save_image', return_value=Path('/tmp/image.png')) as save:
+            with patch('qq_chat.media.save_image', return_value=Path('/tmp/image.png')) as save:
                 result = await bridge.receive_images(Incoming(own, '', images=(image,)))
                 self.assertEqual(result, ['/tmp/image.png'])
                 save.assert_called_once_with('', image['url'])
             self.assertEqual(calls, [('get_image', {'file': 'pic'})])
-            with patch('qq_chat.bridge.save_image', return_value=Path('/tmp/group.png')):
+            with patch('qq_chat.media.save_image', return_value=Path('/tmp/group.png')):
                 result = await bridge.receive_images(Incoming(Source('group', 999, 789), '', images=(image,)))
                 self.assertEqual(result, ['/tmp/group.png'])
             for incoming in (Incoming(Source('private', 789, 789), '', images=(image,)),
@@ -158,7 +158,7 @@ class ImageTests(unittest.TestCase):
                 return {'file': '/cache/image.png', 'url': 'https://gchat.qpic.cn/new'}
             bridge.onebot_call = native
             image = {'file': 'forwarded', 'url': 'https://gchat.qpic.cn/expired'}
-            with patch('qq_chat.bridge.save_reference_image',
+            with patch('qq_chat.media.save_reference_image',
                        side_effect=[OSError('expired'), Path('/saved/image.png')]) as save:
                 paths = await bridge.receive_images(
                     Incoming(Source('private', 123, 123), '', images=(image,)), prefer_url=True)
@@ -180,8 +180,8 @@ class ImageTests(unittest.TestCase):
                     cancelled.set()
             bridge.onebot_call = native
             image = {'file': 'forwarded', 'url': 'https://gchat.qpic.cn/expired'}
-            with patch('qq_chat.bridge.REFERENCE_REFRESH_TIMEOUT', .01), \
-                 patch('qq_chat.bridge.save_reference_image', side_effect=ValueError('unavailable')) as save:
+            with patch('qq_chat.media.REFERENCE_REFRESH_TIMEOUT', .01), \
+                 patch('qq_chat.media.save_reference_image', side_effect=ValueError('unavailable')) as save:
                 with self.assertRaises(ValueError):
                     await asyncio.wait_for(bridge.receive_images(
                         Incoming(Source('private', 123, 123), '', images=(image,)), prefer_url=True), .5)

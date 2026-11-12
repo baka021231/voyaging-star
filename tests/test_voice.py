@@ -255,7 +255,7 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
                     bridge.pending[message['echo']].set_result({'status': 'ok', 'retcode': 0})
             bridge.ws = Socket()
             try:
-                with patch('qq_chat.bridge.random.uniform', return_value=0):
+                with patch('qq_chat.onebot.random.uniform', return_value=0):
                     await bridge.send_audio(Source('group', 111, 123), wav_bytes())
                     await bridge.send_audio(Source('private', 123, 123), wav_bytes())
                 self.assertEqual([s['action'] for s in sent], ['send_group_msg', 'send_private_msg'])

@@ -214,7 +214,7 @@ class ReferenceRoutingTests(unittest.IsolatedAsyncioTestCase):
     async def test_reference_budget_preserves_text_and_unblocks_next_message(self):
         with tempfile.TemporaryDirectory() as directory, \
              patch('qq_chat.bridge.BASE', Path(directory)), \
-             patch('qq_chat.bridge.REFERENCE_IMAGE_BUDGET', .02):
+             patch('qq_chat.media.REFERENCE_IMAGE_BUDGET', .02):
             bridge = Bridge({'owner_qq': 123, 'codex_path': 'unused'})
             calls, downloads = [], []
             async def receive(incoming, *, prefer_url=False):
