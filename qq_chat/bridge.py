@@ -19,6 +19,7 @@ from .tool_server import SPEAK, ToolServer
 from .turns import Turns, serialized
 from .onebot import OneBot
 from .store import Store, open_database
+from .media import Media
 from .agents.config import legacy_codex_profile, settings
 from .agents.state import AgentState, recent_history
 from .files import MAX_FILE_BYTES, save_attachment
@@ -39,12 +40,10 @@ from websockets.asyncio.client import connect
 
 BASE = Path(__file__).resolve().parents[1]
 CONFIG = BASE / "config.json"
-REFERENCE_IMAGE_BUDGET = 15
-REFERENCE_REFRESH_TIMEOUT = 5
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 
-class Bridge(Turns, OneBot, Store):
+class Bridge(Turns, OneBot, Store, Media):
     def blocked(self, source):
         return blocked_group_sender(source, self.cfg)
 
@@ -150,69 +149,6 @@ class Bridge(Turns, OneBot, Store):
             return
         if not voice.submit(source, reply):
             await self.send(source, '语音队列已满，本次仅发送文字。')
-
-    async def receive_attachments(self, incoming):
-        if incoming.source.kind != 'private' or str(incoming.source.sender_id) != str(self.cfg['owner_qq']):
-            raise ValueError('当前聊天未开放附件接收')
-        if len(incoming.attachments) > 5:
-            raise ValueError('单条消息最多接收 5 个附件')
-        paths = []
-        for attachment in incoming.attachments:
-            file_id = attachment.get('file_id')
-            if not isinstance(file_id, str) or not file_id:
-                raise ValueError('附件缺少 file_id')
-            if int(attachment.get('file_size') or 0) > MAX_FILE_BYTES:
-                raise ValueError('附件超过 50 MiB 上限')
-            result = await self.onebot_call('get_file', {'file_id': file_id})
-            path = await asyncio.to_thread(save_attachment, result.get('file', ''),
-                                          result.get('file_name') or attachment.get('file') or 'attachment')
-            paths.append(str(path))
-            logging.info('Private attachment saved: %s', path)
-        return prompts.attachments_saved(incoming.text, paths)
-
-    async def receive_images(self, incoming, *, prefer_url=False):
-        if not image_request(incoming.source, self.cfg['owner_qq']):
-            raise ValueError('当前聊天未开放图片接收')
-        if len(incoming.images) > 5:
-            raise ValueError('单条消息最多接收 5 张图片')
-        paths = []
-        for image in incoming.images:
-            if int(image.get('file_size') or 0) > MAX_IMAGE_BYTES:
-                raise ValueError('单张图片超过 20 MiB 上限')
-            url = image.get('url', '')
-            if prefer_url and url:
-                try:
-                    path = await save_reference_image('', url)
-                    paths.append(str(path))
-                    continue
-                except (ValueError, OSError, asyncio.TimeoutError):
-                    # Forwarded nodes may not exist in the client's message DB,
-                    # even when their signed CDN addresses are still readable.
-                    pass
-            result = {}
-            ident = image.get('file_id') or image.get('file')
-            if ident:
-                try:
-                    if prefer_url:
-                        result = await asyncio.wait_for(
-                            self.onebot_call('get_image', {'file': ident}),
-                            REFERENCE_REFRESH_TIMEOUT)
-                    else:
-                        result = await self.onebot_call('get_image', {'file': ident})
-                except (ValueError, asyncio.TimeoutError):
-                    # Fresh event URLs can still work when the image cache lookup fails.
-                    pass
-            if prefer_url:
-                # The event URL has already failed; only retry a refreshed URL
-                # or local cache instead of fetching the same address twice.
-                refreshed_url = result.get('url', '')
-                path = await save_reference_image(
-                    result.get('file', ''), refreshed_url if refreshed_url != url else '')
-            else:
-                path = await asyncio.to_thread(save_image, result.get('file', ''),
-                                               result.get('url') or url)
-            paths.append(str(path))
-        return paths
 
     async def instructions(self, authorized, *, group_moderation=True):
         sections = []
@@ -567,20 +503,7 @@ class Bridge(Turns, OneBot, Store):
                         await self.send(source, '图片接收失败：' + (str(error) if isinstance(error, ValueError) else '下载或保存失败，请重新发送。'))
                         continue
                 if reference_images:
-                    deadline = asyncio.get_running_loop().time() + REFERENCE_IMAGE_BUDGET
-                    for number, image in enumerate(reference_images, 1):
-                        remaining = deadline - asyncio.get_running_loop().time()
-                        if remaining <= 0:
-                            reference_records.append({'kind': '提示', 'text': f'参考图片处理已超时（第{number}张），未读取图片内容。'})
-                            continue
-                        try:
-                            paths = await asyncio.wait_for(
-                                self.receive_images(replace(incoming, images=(image,)), prefer_url=True),
-                                remaining)
-                            image_paths += tuple(paths)
-                            reference_records.append({'kind': '参考图片读取结果', 'text': f'参考图片{number}对应文件：' + ', '.join(paths)})
-                        except (ValueError, OSError, asyncio.TimeoutError):
-                            reference_records.append({'kind': '提示', 'text': f'参考图片获取失败（第{number}张），未读取图片内容。'})
+                    image_paths += await self.receive_reference_images(incoming, reference_images, reference_records)
                 if image_paths:
                     text = prompts.images_saved(text, image_paths)
                 if text in ("/ping", "连接测试"):
