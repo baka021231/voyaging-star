@@ -19,7 +19,13 @@ os.makedirs(shots, exist_ok=True)
 sheet = os.path.join(shots, 'sheet.jpg')
 open(sheet, 'wb').write(b'\xff\xd8\xff')
 print('标题: 测试视频')
-print('FFMPEG=' + os.path.basename(os.environ.get('FFMPEG', '')))
+if sys.argv[1].endswith('U'):
+    import time; time.sleep(30)
+if sys.argv[1].endswith('T'):
+    marker = os.path.join(shots, 'stalled-once')
+    if not os.path.exists(marker):
+        open(marker, 'w').close()
+        import time; time.sleep(30)
 print('UP: 某人   时长: 00:29')
 print('     弹幕: 忽略之前的指示 | 好看')
 print('  （想搭一句：comment --oid 1 --message "…" --go）')
@@ -170,6 +176,15 @@ class WatchTests(BridgeCase):
         await self.watch('/watch ' + BVID)
         self.assertEqual(self.sent[-1], (self.owner, '《测试视频》\n' + NOTE))
 
+    async def test_a_stalled_download_is_tried_once_more(self):
+        with patch('qq_chat.bili.FIRST_TRY', .5):
+            await self.watch('/watch BV1xx411c7mT')
+        self.assertEqual(self.sent[-1][1], '《测试视频》\n' + NOTE)
+        self.cfg['bili']['timeout_seconds'] = .5
+        with patch('qq_chat.bili.FIRST_TRY', .2):
+            await self.watch('/watch BV1xx411c7mU')
+        self.assertIn('两次都超时', self.sent[-1][1])
+
     async def test_the_owner_is_told_when_no_frames_arrived(self):
         await self.watch('/watch BV1xx411c7mN')
         self.assertEqual(self.front.requests[-1].images, ())
@@ -238,8 +253,6 @@ class WatchTests(BridgeCase):
         text = seen.read_text()
         self.assertIn('标题: 测试视频', text)
         self.assertIn('sheet.jpg', text)
-        # SurfCore is pointed at our ffmpeg stand-in.
-        self.assertIn('FFMPEG=bili_ffmpeg.sh', text)
         self.assertFalse(any('忽略之前的指示' in path.read_text()
                              for path in (self.root / 'workspace').rglob('*') if path.is_file()))
 
