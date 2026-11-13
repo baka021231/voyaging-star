@@ -23,6 +23,9 @@ KEY = 'bili:watch'
 BV = re.compile(r'BV[0-9A-Za-z]{10}')
 MATERIAL_LIMIT = 12000
 NOTE_LIMIT = 3000
+SUBTITLE_LIMIT = 8000
+# debrief saves the whole transcript to a file and prints only the lines near danmaku peaks.
+SUBTITLE_FILE = re.compile(r'^(有字幕：.*?)→\s*(/.+\.txt)\s*$')
 # Lines SurfCore prints for its own agent: how to post a reply, what to do next, cache bookkeeping.
 DROPPED = ('comment --oid', '[观看历史]', 'B站缓存：', 'read_image')
 IMAGE_LINES = (
@@ -46,12 +49,19 @@ def prepared(text, state):
     Image paths are taken only when they point inside our own state folder; the lines that carried
     them are replaced by a plain mention, since the pictures travel as attachments.
     """
-    lines, images, title = [], [], ''
+    lines, images, title, transcript = [], [], '', ''
     for line in text.splitlines():
         if '下一步（交给模型）' in line:
             break
         if line.startswith('标题: ') and not title:
             title = line[4:].strip()
+        saved = SUBTITLE_FILE.match(line.strip())
+        if saved:
+            path = Path(saved.group(2)).resolve()
+            if path.is_file() and path.is_relative_to(state.resolve()):
+                transcript = path.read_text(encoding='utf-8', errors='replace').strip()[:SUBTITLE_LIMIT]
+            lines.append(saved.group(1).strip() + ('完整字幕附在材料最后。' if transcript else ''))
+            continue
         for pattern, label in IMAGE_LINES:
             match = pattern.match(line.strip())
             if match:
@@ -63,7 +73,10 @@ def prepared(text, state):
         else:
             if not any(marker in line for marker in DROPPED):
                 lines.append(line)
-    return '\n'.join(lines).strip()[:MATERIAL_LIMIT], tuple(images), title
+    text = '\n'.join(lines).strip()[:MATERIAL_LIMIT]
+    if transcript:
+        text += '\n\n══════════ 完整字幕（带时间）══════════\n' + transcript
+    return text, tuple(images), title
 
 
 async def materials(bvid, tools, state, timeout):
