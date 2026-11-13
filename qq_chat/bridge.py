@@ -199,6 +199,8 @@ class Bridge(Turns, OneBot, Store, Media, Commands, Bili):
             request.runtime_instructions += prompts.VOICE_ONLY_SPEAK if speak_granted else prompts.VOICE_ONLY_AUTO
         if source.kind == 'private' and authorized:
             request.runtime_instructions += prompts.PRIVATE_VOICE_SWITCH
+        if authorized:
+            request.runtime_instructions += self.watch_status()
         # The bridge never told her the time, so in private turns she often ran `date` before speaking.
         request.runtime_instructions = prompts.current_time() + '\n' + request.runtime_instructions
         return request
@@ -480,6 +482,12 @@ class Bridge(Turns, OneBot, Store, Media, Commands, Bili):
                     continue
                 if head == '/front':
                     control = asyncio.create_task(self.front_command(incoming.source, incoming.text))
+                    controls.add(control)
+                    control.add_done_callback(controls.discard)
+                    continue
+                if head == '/watch' and owner_request(incoming.source, self.cfg['owner_qq']):
+                    # Not queued: it only starts or stops a background watch, so it works while she is busy.
+                    control = asyncio.create_task(self.watch_command(incoming.source, incoming.text, BASE))
                     controls.add(control)
                     control.add_done_callback(controls.discard)
                     continue
