@@ -86,6 +86,7 @@ class WatchTests(BridgeCase):
         await self.watch('/watch ' + BVID)
         first, second = self.front.requests
         self.assertIn('以【想细看】开头', first.text)
+        self.assertIn('以【没细看】开头，照实说一句为什么', first.text)
         self.assertEqual(second.session_id, first.session_id)
         # Three at most; the one ffmpeg could not cut is left out; the long one is capped at 90 seconds.
         self.assertIn('附图 1：00:05–00:20\n附图 2：01:00–02:30\n', second.text)
