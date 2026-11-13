@@ -58,9 +58,9 @@ def prepared(text, state):
         saved = SUBTITLE_FILE.match(line.strip())
         if saved:
             path = Path(saved.group(2)).resolve()
-            if path.is_file() and path.is_relative_to(state.resolve()):
+            if not transcript and path.is_file() and path.is_relative_to(state.resolve()):
                 transcript = path.read_text(encoding='utf-8', errors='replace').strip()[:SUBTITLE_LIMIT]
-            lines.append(saved.group(1).strip() + ('完整字幕附在材料最后。' if transcript else ''))
+                lines.append(saved.group(1).strip() + '完整字幕附在材料最后。')
             continue
         for pattern, label in IMAGE_LINES:
             match = pattern.match(line.strip())

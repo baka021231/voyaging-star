@@ -25,7 +25,7 @@ print('SHEET: ' + sheet)
 print('SUBS:  /etc/passwd')
 if sys.argv[1].endswith('S'):
     subs = os.path.join(shots, 'subs.txt')
-    open(subs, 'w', encoding='utf-8').write('[00:01] 第一句\\n[00:05] 第二句\\n')
+    open(subs, 'w', encoding='utf-8').write('[00:01] 第一句\n[00:05] 第二句\n')
     print('有字幕：2 行（00:00 → 00:05）→ ' + subs)
     print('有字幕：9 行（00:00 → 00:09）→ /etc/hostname.txt')
 print('[观看历史] 已记一笔')
@@ -80,6 +80,7 @@ class WatchTests(BridgeCase):
         self.assertNotIn('subs.txt', text)
         # A transcript path outside our folder is neither read nor shown.
         self.assertNotIn('/etc/hostname', text)
+        self.assertNotIn('9 行', text)
 
     async def test_each_video_starts_a_fresh_session_and_sees_earlier_favorites(self):
         await self.worker_command('/watch ' + BVID)
