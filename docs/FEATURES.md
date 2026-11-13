@@ -46,6 +46,7 @@ Claude `/models` 读取 profile 的配置目录，`/model default` 恢复其配�
 - 主人私聊发 `/watch BV号`（或带 BV 号的视频链接）。桥接先回一句“正在取材料”，她看完后把观后记发回来，一般一两分钟。期间其他消息排队。
 - **材料从哪来**：桥接运行 SurfCore 的只读命令 `debrief`（装在仓库外的 `~/tools/surfcore`，只复制了它需要的 9 个文件），拿到标题和数据、封面、弹幕、热门评论、画面截图拼图。缓存在 `run/bili/`，7 天自动清理。
 - **谁在看**：主人当前 agent 的一个只读会话（Codex 是只读沙箱），同一份 `SOUL.md` 和 `OWNER.md`。每个视频都新开会话。弹幕和评论是陌生人写的字，不进入有整机权限的主人会话；主人会话只在读 `workspace/bili/` 时看到她自己写的观后记。
+- **留下的记录**：她看到的材料全文和附图路径存 `run/bili/materials/日期-BV号.txt`（陌生人的文字，所以不放进 workspace）；日志有一行 `Bili watch completed video=… images=… favorite=…`；SurfCore 自己的观看记录在 `run/bili/.dsh/surfcore/bili/watch-history.jsonl`。
 - **观后记**固定五项：看到了什么、感受、收藏（是或否加原因）、想评论（只写不发）、想对你说。全文存 `workspace/bili/notes/日期-BV号.md`；写了“是”的追加一行到 `workspace/bili/favorites.md`，下次看视频时她能看到最近 10 条收藏。
 - **不会在 B 站留下任何东西**：登录文件 `run/bili/.dsh/surfcore/bili/credentials.json` 默认全空（游客）。要字幕可以填小号的 `sessdata` 和 `buvid3`，`bili_jct` 必须留空：它是写操作的校验码，没有它 B 站会拒绝评论、点赞、收藏；会发评论、私信、动态的命令没有复制过来。观看记录也只在本机。
 - **限制**：她听不到声音；默认每个视频只看 9 帧，长视频只是走马观花；没有字幕的视频只能读画面上的字。不登录时拿不到官方或 AI 字幕；登录后有字幕的视频会把完整字幕（最多 8000 字）附在材料里。
