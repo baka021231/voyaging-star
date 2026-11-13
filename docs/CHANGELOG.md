@@ -7,6 +7,7 @@
 - 主人私聊发 `/watch BV号`，她在只读会话里看这个视频的截图、弹幕和评论，写一份观后记发回来，并存进 `workspace/bili/`。说明见 FEATURES 的“看 B 站视频”。
 - 取材料用 SurfCore（MIT）的只读命令，放在仓库外的 `~/tools/surfcore`，固定在提交 `0ce8580`，文件未改动；没有配置 B 站登录，不会发任何东西。本机新装了 Node.js 22 和 ffmpeg 8（系统源）。
 - 新文件 `qq_chat/bili.py`，提示词在 `prompts.py` 的 `WATCHING`；`/help` 加了一句。新增 7 个测试，共 300 个通过。
+- 登录后的完整字幕会附在材料最后（`debrief` 只打印弹幕热区附近的几句，全文存在文件里）。登录文件只填 `sessdata` 和 `buvid3`，不填 `bili_jct`。
 - 这是试验的第一步，只支持手动点名视频。她自己刷、成长记录都还没做。
 
 ### 拆分 bridge.py
