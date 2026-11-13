@@ -3,7 +3,7 @@
 This file is the orchestration: who may do what, how one turn is assembled and run, and the two loops
 (session() receives, worker() answers). The parts with a job of their own live next door and Bridge
 inherits them: onebot (sending), store (database, group context), media (images, attachments),
-commands (owner commands) and turns (per-chat lock, /stop, deliver).
+commands (owner commands), turns (per-chat lock, /stop, deliver) and bili (/watch).
 """
 import asyncio
 import contextlib
@@ -18,6 +18,7 @@ from .agents import FULL, NONE, TurnRequest, build_agents
 from .agents.base import MissingSession, Interrupted
 from .agents.config import legacy_codex_profile, settings
 from .agents.state import AgentState
+from .bili import Bili
 from .commands import Commands
 from .front_switch import command as switch_front_command
 from .media import Media
@@ -44,7 +45,7 @@ CONFIG = BASE / "config.json"
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 
-class Bridge(Turns, OneBot, Store, Media, Commands):
+class Bridge(Turns, OneBot, Store, Media, Commands, Bili):
     def blocked(self, source):
         return blocked_group_sender(source, self.cfg)
 
@@ -374,6 +375,9 @@ class Bridge(Turns, OneBot, Store, Media, Commands):
                     continue
                 if text.split(maxsplit=1)[:1] in (['/model'], ['/models'], ['/effort']):
                     await self.model_commands(source, text)
+                    continue
+                if head == '/watch':
+                    await self.watch_command(source, text, BASE)
                     continue
                 reference_records, reference_images = [], ()
                 if incoming.references:

@@ -2,6 +2,13 @@
 
 ## 2026-11-13
 
+### 新增 /watch：让她看一个 B 站视频
+
+- 主人私聊发 `/watch BV号`，她在只读会话里看这个视频的截图、弹幕和评论，写一份观后记发回来，并存进 `workspace/bili/`。说明见 FEATURES 的“看 B 站视频”。
+- 取材料用 SurfCore（MIT）的只读命令，放在仓库外的 `~/tools/surfcore`，固定在提交 `0ce8580`，文件未改动；没有配置 B 站登录，不会发任何东西。本机新装了 Node.js 22 和 ffmpeg 8（系统源）。
+- 新文件 `qq_chat/bili.py`，提示词在 `prompts.py` 的 `WATCHING`；`/help` 加了一句。新增 7 个测试，共 300 个通过。
+- 这是试验的第一步，只支持手动点名视频。她自己刷、成长记录都还没做。
+
 ### 拆分 bridge.py
 
 - `bridge.py` 从 885 行拆到约 530 行，行为不变。原样搬出五块：`onebot.py`（发送）、`store.py`（建表、去重、群聊参考记录）、`media.py`（附件和图片）、`commands.py`（不经过模型的命令和 `/help` 文字）；每轮的记忆、语音工具说明文字搬进 `prompts.py`。`Bridge` 继承这些类。
