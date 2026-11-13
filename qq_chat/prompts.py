@@ -235,6 +235,18 @@ WATCHING = (
 )
 
 
+def watching_now(video):
+    """Told to the owner's chat session while a watch runs beside it."""
+    return (f'\n你此刻正在后台看 B 站视频 {video}（主人用 /watch 让你看的）。看的过程在另一个只读会话里，'
+            '本会话看不到内容；看完后观后记会自动发给主人。主人问起时照实说你正在看、还没看完，不要编内容。')
+
+
+def watched(video, note):
+    """Told to the owner's chat session for a while after a watch has finished."""
+    return (f'\n你刚在后台看完 B 站视频 {video}，观后记已经自动发给主人，原文在 workspace 下的 {note}'
+            '（你自己写的）。主人聊到它时，先读这份观后记再回应。')
+
+
 def watching(rules):
     """Developer instructions for the read-only session that watches one video."""
     return WATCHING + ('\n' + WORKSPACE_RULES + '\n' + rules if rules else '')
