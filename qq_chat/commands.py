@@ -6,7 +6,7 @@ import sqlite3
 from .message_policy import owner_request
 from .turns import serialized
 
-HELP = ("Aemeath：主人在私聊或群聊可请求Linux操作，其他人仅文字聊天；Windows文件只读。群聊可单独@机器人，或喊Aemeath、爱弥斯、ams、小爱（英文不分大小写）。图片识别向群友和主人开放，每条最多5张、每张20 MiB，支持PNG、JPEG、WebP、GIF。文件附件仅主人私聊接收。/ping、/help 所有人可用；/voice on 开启主人私聊仅语音、/voice off 或“切回文字”关闭、/voice 查看状态；/new 创建新会话、/session 查看会话ID、/models 查看可选模型、/model 查看当前模型、/model 模型名 切换、/model default 恢复默认、/front 查看主人用的 agent、/front 配置名 切换并自动重启（所有主人会话生效，访客不变）、/effort 查看强度、/effort 档位 切换强度、/effort default 恢复模型默认强度、/stop 停止当前这一轮、/blacklist 查看群聊用户黑名单、/block QQ号 拉黑、/unblock QQ号 解除拉黑仅限主人。黑名单用户的群消息静默忽略。")
+HELP = ("Aemeath：主人在私聊或群聊可请求Linux操作，其他人仅文字聊天；Windows文件只读。群聊可单独@机器人，或喊Aemeath、爱弥斯、ams、小爱（英文不分大小写）。图片识别向群友和主人开放，每条最多5张、每张20 MiB，支持PNG、JPEG、WebP、GIF。文件附件仅主人私聊接收。/ping、/help 所有人可用；/voice on 开启主人私聊仅语音、/voice off 或“切回文字”关闭、/voice 查看状态；/new 创建新会话、/session 查看会话ID、/models 查看可选模型、/model 查看当前模型、/model 模型名 切换、/model default 恢复默认、/front 查看主人用的 agent、/front 配置名 切换并自动重启（所有主人会话生效，访客不变）、/effort 查看强度、/effort 档位 切换强度、/effort default 恢复模型默认强度、/stop 停止当前这一轮、/watch BV号 让她看一个B站视频并写观后记（仅私聊，不在B站留痕）、/blacklist 查看群聊用户黑名单、/block QQ号 拉黑、/unblock QQ号 解除拉黑仅限主人。黑名单用户的群消息静默忽略。")
 
 
 class Commands:
