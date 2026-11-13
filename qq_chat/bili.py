@@ -309,6 +309,6 @@ class Bili:
                 out.write(f'- {now:%Y-%m-%d} 《{shown}》 https://www.bilibili.com/video/{bvid}'
                           + (f' —— {reason}' if reason else '') + '\n')
         self._watched = {'bvid': bvid, 'note': str(saved.relative_to(workspace)), 'at': time.monotonic()}
-        logging.info('Bili watch completed video=%s images=%d closer=%d favorite=%s',
-                     bvid, len(images), len(sheets), bool(kept))
+        logging.info('Bili watch completed video=%s images=%d closer_offered=%s closer=%d favorite=%s',
+                     bvid, len(images), video is not None, len(sheets), bool(kept))
         await self.send(source, f'《{shown}》\n' + blind + looked + note[:NOTE_LIMIT])
