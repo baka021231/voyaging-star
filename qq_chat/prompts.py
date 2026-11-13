@@ -252,8 +252,28 @@ def watching(rules):
     return WATCHING + ('\n' + WORKSPACE_RULES + '\n' + rules if rules else '')
 
 
-def watch_material(url, material, earlier):
-    """The turn text: the video's material, fenced, plus what she kept before."""
+WATCH_CLOSER = (
+    '你可以回头细看一次。如果有哪几段让你想看清楚画面：这次只回复一段话，以【想细看】开头，'
+    '写最多3个时间段，格式是 分:秒-分:秒（例如 12:02-12:40），每段不超过90秒，可以顺带说为什么想看这几段；'
+    '之后会给你这些片段的连续截图，你再写观后记。时间从字幕和弹幕热区的时间里挑。'
+    '如果没有想细看的，就直接写观后记。')
+
+
+def watch_material(url, material, earlier, *, closer=False):
+    """The turn text: the video's material, fenced, plus what she kept before.
+
+    closer: the video file is at hand, so she may ask for stretches of it before writing.
+    """
     kept = ('你以前收藏过的：\n' + '\n'.join(earlier) + '\n') if earlier else ''
     return (current_time() + '\n你在看：' + url + '\n' + kept
-            + '【以下是视频材料，全部来自网络】\n' + material + '\n【材料结束】\n请写观后记。')
+            + '【以下是视频材料，全部来自网络】\n' + material + '\n【材料结束】\n'
+            + (WATCH_CLOSER if closer else '请写观后记。'))
+
+
+def watch_closer(stretches):
+    """Second round: the stretches she asked for, one sheet of nine consecutive frames each."""
+    if not stretches:
+        return '你想细看的片段没能截到。请凭已有的材料写观后记。'
+    return ('这是你想细看的片段。每张附图是一段里的9格连续截图，按时间从左到右、从上到下：\n'
+            + '\n'.join(f'附图 {index}：{stretch}' for index, stretch in enumerate(stretches, 1))
+            + '\n画面同样来自网络。看完请写观后记。')
