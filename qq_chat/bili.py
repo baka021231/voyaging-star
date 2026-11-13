@@ -2,7 +2,12 @@
 
 The bridge fetches the material (frames, danmaku, top comments) with SurfCore's read-only `debrief`
 command, hands it to a read-only session of the owner's agent, saves her note under workspace/bili/
-and sends it to the owner. Nothing is posted to Bilibili; the login file never holds the write token.
+and sends it to the owner.
+
+What reaches Bilibili: nothing while the login file has no write token (bili_jct). When the owner has
+filled it in, the bridge itself makes exactly two writes after her note is saved: it reports the video
+as watched (so the account's history and recommendations follow her) and adds a video she kept to the
+account's default favourites folder. The watching session never talks to Bilibili.
 
 A watch runs beside the chat, one at a time: the worker starts it and goes back to the queue. The
 owner's chat session is told each turn that she is watching, or has just watched, so both sides of
@@ -13,12 +18,15 @@ the watching session starts fresh for every video and cannot write files or use 
 """
 import asyncio
 import contextlib
+import json
 from datetime import datetime
 import logging
 import os
 from pathlib import Path
 import re
 import time
+import urllib.parse
+import urllib.request
 
 from . import prompts
 from .agents import NONE, TurnRequest
@@ -45,6 +53,60 @@ IMAGE_LINES = (
     (re.compile(r'^SHEET:\s*(/.+)$'), '画面截图拼图'),
     (re.compile(r'^SUBS:\s*(/.+)$'), '字幕区域截图'),
 )
+
+
+API = 'https://api.bilibili.com'
+BROWSER = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
+           'Chrome/131.0.0.0 Safari/537.36')
+
+
+def _request(url, cookie, data):
+    request = urllib.request.Request(
+        url, urllib.parse.urlencode(data).encode() if data is not None else None,
+        {'user-agent': BROWSER, 'referer': 'https://www.bilibili.com/', 'cookie': cookie})
+    # No proxy from the environment: the cookie goes to Bilibili only.
+    with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=20) as reply:
+        return json.loads(reply.read())
+
+
+async def bilibili(path, cookie, data=None):
+    """One call to Bilibili's web API: GET, or POST when data is given. Returns its `data`, raises on refusal."""
+    reply = await asyncio.to_thread(_request, API + path, cookie, data)
+    if reply.get('code') != 0:
+        raise RuntimeError(f'Bilibili refused {path.split("?")[0]} (code {reply.get("code")})')
+    return reply.get('data') or {}
+
+
+async def sync(state, bvid, favorite):
+    """Tell the account what she did: watched to the end, and kept or not. Returns what was synced, in Chinese.
+
+    Does nothing unless the login file holds both the session and the write token. These two calls are
+    the only writes this project makes to Bilibili.
+    """
+    try:
+        saved = json.loads((state / '.dsh/surfcore/bili/credentials.json').read_text())
+    except (OSError, ValueError):
+        return []
+    token = saved.get('bili_jct')
+    if not token or not saved.get('sessdata'):
+        return []
+    cookie = f"SESSDATA={saved['sessdata']}; bili_jct={token}; buvid3={saved.get('buvid3', '')}"
+    done = []
+    video = await bilibili('/x/web-interface/view?bvid=' + bvid, cookie)
+    first = (video.get('pages') or [{}])[0]
+    await bilibili('/x/v2/history/report', cookie, {
+        'aid': video['aid'], 'cid': first.get('cid', video['cid']),
+        'progress': first.get('duration', video['duration']), 'platform': 'web', 'csrf': token})
+    done.append('观看历史')
+    if favorite:
+        me = await bilibili('/x/web-interface/nav', cookie)
+        folders = (await bilibili(f"/x/v3/fav/folder/created/list-all?up_mid={me['mid']}&type=2", cookie)).get('list') or []
+        if folders:
+            await bilibili('/x/v3/fav/resource/deal', cookie, {
+                'rid': video['aid'], 'type': 2, 'add_media_ids': folders[0]['id'], 'del_media_ids': '',
+                'csrf': token})
+            done.append('收藏夹')
+    return done
 
 
 class WatchFailed(Exception):
@@ -100,7 +162,7 @@ async def materials(bvid, tools, state, timeout):
     account.mkdir(parents=True, exist_ok=True, mode=0o700)
     credentials = account / 'credentials.json'
     if not credentials.exists():
-        # Anonymous on purpose: without a login Bilibili refuses every write, whatever the tool tries.
+        # Anonymous by default: without a login Bilibili refuses every write, whatever the tool tries.
         credentials.write_text('{"sessdata": "", "bili_jct": "", "buvid3": ""}')
         credentials.chmod(0o600)
     process = await asyncio.create_subprocess_exec(
@@ -309,6 +371,15 @@ class Bili:
                 out.write(f'- {now:%Y-%m-%d} 《{shown}》 https://www.bilibili.com/video/{bvid}'
                           + (f' —— {reason}' if reason else '') + '\n')
         self._watched = {'bvid': bvid, 'note': str(saved.relative_to(workspace)), 'at': time.monotonic()}
-        logging.info('Bili watch completed video=%s images=%d closer_offered=%s closer=%d favorite=%s',
-                     bvid, len(images), video is not None, len(sheets), bool(kept))
-        await self.send(source, f'《{shown}》\n' + blind + looked + note[:NOTE_LIMIT])
+        synced = ''
+        try:
+            done = await sync(root / 'run/bili', bvid, bool(kept))
+            if done:
+                synced = '\n（已同步到 B 站账号：' + '、'.join(done) + '）'
+        except Exception as error:
+            # Her note is already saved; a refused sync must not lose it.
+            logging.warning('Bili sync failed (%s)', type(error).__name__)
+            synced = '\n（同步到 B 站账号失败，观后记和本机收藏不受影响）'
+        logging.info('Bili watch completed video=%s images=%d closer_offered=%s closer=%d favorite=%s synced=%s',
+                     bvid, len(images), video is not None, len(sheets), bool(kept), synced.strip() or 'no')
+        await self.send(source, f'《{shown}》\n' + blind + looked + note[:NOTE_LIMIT] + synced)

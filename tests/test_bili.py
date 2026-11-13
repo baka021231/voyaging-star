@@ -1,5 +1,6 @@
 """/watch: material from a stand-in for SurfCore, a controlled agent, files under a temporary workspace."""
 import asyncio
+import json
 import sys
 from unittest.mock import patch
 
@@ -256,6 +257,53 @@ class WatchTests(BridgeCase):
         self.assertIn('sheet.jpg', text)
         self.assertFalse(any('忽略之前的指示' in path.read_text()
                              for path in (self.root / 'workspace').rglob('*') if path.is_file()))
+
+    def login(self, token):
+        account = self.root / 'run/bili/.dsh/surfcore/bili'
+        account.mkdir(parents=True)
+        (account / 'credentials.json').write_text(json.dumps({'sessdata': 'S', 'bili_jct': token, 'buvid3': 'B'}))
+
+    async def test_with_the_write_token_her_watch_and_favourite_reach_the_account(self):
+        calls = []
+
+        async def api(path, cookie, data=None):
+            calls.append((path.split('?')[0], cookie, data))
+            return {'/x/web-interface/view': {'aid': 7, 'cid': 1, 'duration': 900,
+                                              'pages': [{'cid': 11, 'duration': 300}, {'cid': 12, 'duration': 600}]},
+                    '/x/web-interface/nav': {'mid': 42},
+                    '/x/v3/fav/folder/created/list-all': {'list': [{'id': 555}, {'id': 666}]}}.get(path.split('?')[0], {})
+        self.login('T')
+        with patch('qq_chat.bili.bilibili', api):
+            await self.watch('/watch ' + BVID)
+            self.assertTrue(self.sent[-1][1].endswith(NOTE + '\n（已同步到 B 站账号：观看历史、收藏夹）'))
+            writes = [(path, data) for path, _, data in calls if data is not None]
+            # Exactly two writes: watched to the end of the first part, and kept in the default folder.
+            self.assertEqual(writes, [
+                ('/x/v2/history/report', {'aid': 7, 'cid': 11, 'progress': 300, 'platform': 'web', 'csrf': 'T'}),
+                ('/x/v3/fav/resource/deal', {'rid': 7, 'type': 2, 'add_media_ids': 555, 'del_media_ids': '', 'csrf': 'T'})])
+            self.assertTrue(all(cookie == 'SESSDATA=S; bili_jct=T; buvid3=B' for _, cookie, _ in calls))
+            calls.clear()
+            self.front.reply = NOTE.replace('【收藏】是，想再看一遍。', '【收藏】否。')
+            await self.watch('/watch ' + BVID)
+            self.assertTrue(self.sent[-1][1].endswith('（已同步到 B 站账号：观看历史）'))
+            self.assertEqual([path for path, _, data in calls if data is not None], ['/x/v2/history/report'])
+
+    async def test_a_refused_sync_keeps_her_note(self):
+        async def api(path, cookie, data=None):
+            raise RuntimeError('refused')
+        self.login('T')
+        with patch('qq_chat.bili.bilibili', api):
+            await self.watch('/watch ' + BVID)
+        self.assertIn(NOTE + '\n（同步到 B 站账号失败', self.sent[-1][1])
+        self.assertEqual(len(list((self.root / 'workspace/bili/notes').iterdir())), 1)
+
+    async def test_without_the_write_token_nothing_is_sent_to_the_account(self):
+        async def api(path, cookie, data=None):
+            raise AssertionError('no call expected')
+        self.login('')
+        with patch('qq_chat.bili.bilibili', api):
+            await self.watch('/watch ' + BVID)
+        self.assertEqual(self.sent[-1][1], '《测试视频》\n' + NOTE)
 
     async def test_no_login_is_configured(self):
         await self.watch('/watch ' + BVID)
