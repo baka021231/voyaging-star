@@ -28,6 +28,7 @@ FFMPEG = 'ffmpeg'
 KEY = 'bili:watch'
 BV = re.compile(r'BV[0-9A-Za-z]{10}')
 MATERIAL_LIMIT = 12000
+FIRST_TRY = 120
 NOTE_LIMIT = 3000
 # A closer look: she names stretches of the video and gets nine consecutive frames of each.
 SEGMENTS, SEGMENT_SECONDS, SEGMENT_MINIMUM = 3, 90, 3
@@ -90,7 +91,7 @@ def prepared(text, state):
     return text, tuple(images), title
 
 
-async def materials(bvid, tools, state, timeout, ffmpeg=None):
+async def materials(bvid, tools, state, timeout):
     """Run SurfCore's debrief for one video: (text, images, title, downloaded video or None).
 
     Its files and cache stay under `state`. The video file is kept for a closer look; the caller deletes it.
@@ -104,8 +105,7 @@ async def materials(bvid, tools, state, timeout, ffmpeg=None):
         credentials.chmod(0o600)
     process = await asyncio.create_subprocess_exec(
         NODE, str(tools / 'commands/debrief.mjs'), bvid, '--keep-mp4', cwd=state,
-        env={'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'HOME': str(state), 'DSH_HOME': str(state / '.dsh'),
-             **({'FFMPEG': str(ffmpeg)} if ffmpeg else {})},
+        env={'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'HOME': str(state), 'DSH_HOME': str(state / '.dsh')},
         stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     try:
         output, _ = await asyncio.wait_for(process.communicate(), timeout)
@@ -143,10 +143,10 @@ async def closer_look(video, wanted, timeout):
     sheets = []
     for start, end in wanted:
         sheet = video.with_name(f'{video.stem}-{start}-{end}.jpg')
-        # -strict unofficial: ffmpeg 8 otherwise refuses JPEG from limited-range video (see tools/bili_ffmpeg.sh).
+        # A stretch past the end of the file makes ffmpeg fail or write nothing; either way it is skipped below.
         process = await asyncio.create_subprocess_exec(
             FFMPEG, '-y', '-loglevel', 'error', '-ss', str(start), '-t', str(end - start), '-i', str(video),
-            '-vf', f'fps=9/{end - start},scale=480:-2,tile=3x3', '-frames:v', '1', '-strict', 'unofficial', str(sheet),
+            '-vf', f'fps=9/{end - start},scale=480:-2,tile=3x3', '-frames:v', '1', str(sheet),
             stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
         try:
             await asyncio.wait_for(process.wait(), timeout)
@@ -231,11 +231,16 @@ class Bili:
 
     async def _watch_video(self, source, bvid, tools, root):
         timeout = float((self.cfg.get('bili') or {}).get('timeout_seconds', 300))
+        # The video download sometimes stalls (seen twice on 2026-11-13; normal is 10-30 s), and SurfCore
+        # sets no timeout on it. Give up on a stalled attempt early and try once more with the full time.
         try:
-            material, images, title, video = await materials(bvid, tools, root / 'run/bili', timeout,
-                                                             root / 'tools/bili_ffmpeg.sh')
+            try:
+                material, images, title, video = await materials(bvid, tools, root / 'run/bili', min(timeout, FIRST_TRY))
+            except asyncio.TimeoutError:
+                logging.warning('Bili material stalled; trying once more')
+                material, images, title, video = await materials(bvid, tools, root / 'run/bili', timeout)
         except asyncio.TimeoutError:
-            raise WatchFailed('取视频材料超时，请稍后再试。') from None
+            raise WatchFailed('取视频材料两次都超时，请稍后再试。') from None
         try:
             await self._watch_material(source, bvid, root, timeout, material, images, title, video)
         finally:
