@@ -8,6 +8,8 @@
 - 取材料用 SurfCore（MIT）的只读命令，放在仓库外的 `~/tools/surfcore`，固定在提交 `0ce8580`，文件未改动；没有配置 B 站登录，不会发任何东西。本机新装了 Node.js 22 和 ffmpeg 8（系统源）。
 - 新文件 `qq_chat/bili.py`，提示词在 `prompts.py` 的 `WATCHING`；`/help` 加了一句。新增 7 个测试，共 300 个通过。
 - 登录后的完整字幕会附在材料最后（`debrief` 只打印弹幕热区附近的几句，全文存在文件里）。登录文件只填 `sessdata` 和 `buvid3`，不填 `bili_jct`。
+- 修复抽帧失败：ffmpeg 8 不肯把有限色彩范围的视频写成 JPEG，这类视频（实测一个 31 分钟的官方剧情动画）九宫格整张失败，她只看到封面和字幕。`tools/bili_ffmpeg.sh` 替 SurfCore 补上 `-strict unofficial`。
+- 每次观看把她看到的材料存到 `run/bili/materials/`，日志带上视频号。
 - 这是试验的第一步，只支持手动点名视频。她自己刷、成长记录都还没做。
 
 ### 拆分 bridge.py

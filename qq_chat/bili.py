@@ -79,7 +79,7 @@ def prepared(text, state):
     return text, tuple(images), title
 
 
-async def materials(bvid, tools, state, timeout):
+async def materials(bvid, tools, state, timeout, ffmpeg=None):
     """Run SurfCore's debrief for one video. Its files and cache stay under `state`."""
     account = state / '.dsh/surfcore/bili'
     account.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -90,7 +90,8 @@ async def materials(bvid, tools, state, timeout):
         credentials.chmod(0o600)
     process = await asyncio.create_subprocess_exec(
         NODE, str(tools / 'commands/debrief.mjs'), bvid, cwd=state,
-        env={'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'HOME': str(state), 'DSH_HOME': str(state / '.dsh')},
+        env={'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'HOME': str(state), 'DSH_HOME': str(state / '.dsh'),
+             **({'FFMPEG': str(ffmpeg)} if ffmpeg else {})},
         stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     try:
         output, _ = await asyncio.wait_for(process.communicate(), timeout)
@@ -129,7 +130,8 @@ class Bili:
         timeout = float((self.cfg.get('bili') or {}).get('timeout_seconds', 300))
         await self.send(source, '正在取视频材料，她看完会把观后记发过来，大约一两分钟；期间其他消息会排队。')
         try:
-            material, images, title = await materials(bvid, tools, root / 'run/bili', timeout)
+            material, images, title = await materials(bvid, tools, root / 'run/bili', timeout,
+                                                      root / 'tools/bili_ffmpeg.sh')
         except WatchFailed as error:
             await self.send(source, str(error))
             return
@@ -164,6 +166,11 @@ class Bili:
             await self.send(source, '她这次没有写出观后记。')
             return
         now = datetime.now().astimezone()
+        # What she was shown, for the owner to check later. Strangers' text: kept out of workspace/.
+        seen = root / 'run/bili/materials'
+        seen.mkdir(parents=True, exist_ok=True, mode=0o700)
+        (seen / f'{now:%Y-%m-%d-%H%M}-{bvid}.txt').write_text(
+            material + '\n\n附图：\n' + '\n'.join(map(str, images)) + '\n', encoding='utf-8')
         shown = one_line(title, 80) or bvid
         notes = workspace / 'bili/notes'
         notes.mkdir(parents=True, exist_ok=True)
@@ -175,5 +182,5 @@ class Bili:
             with favorites.open('a', encoding='utf-8') as out:
                 out.write(f'- {now:%Y-%m-%d} 《{shown}》 https://www.bilibili.com/video/{bvid}'
                           + (f' —— {reason}' if reason else '') + '\n')
-        logging.info('Bili watch completed images=%d favorite=%s', len(images), bool(kept))
+        logging.info('Bili watch completed video=%s images=%d favorite=%s', bvid, len(images), bool(kept))
         await self.send(source, f'《{shown}》\n' + note[:NOTE_LIMIT])
