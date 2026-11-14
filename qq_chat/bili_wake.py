@@ -306,6 +306,12 @@ class BiliWake:
                 if bvid in offered and bvid not in picks:
                     picks.append(bvid)
         picks = picks[:wake['watch']]
+        # What was in front of her and what she took, for the owner to check later. Strangers' text:
+        # kept out of workspace/, next to the material of the videos themselves.
+        offer = state / 'materials' / f'{moment:%Y-%m-%d-%H%M}-offer.txt'
+        offer.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        offer.write_text('她的兴趣清单：' + '、'.join(words) + '\n\n' + listing(items) + '\n\n她挑了：'
+                         + ('、'.join(picks) or '没有') + '\n', encoding='utf-8')
         changed = change_interests(workspace, reply)
         fact = '；'.join([f'自己的时间；看了 {len(items)} 个视频的标题和简介', f'挑了 {len(picks)} 个'] + changed)
         diary = self._diary_line(root, moment, '醒了', fact, reply)
