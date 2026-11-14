@@ -4,10 +4,14 @@ The bridge fetches the material (frames, danmaku, top comments) with SurfCore's 
 command, hands it to a read-only session of the owner's agent, saves her note under workspace/bili/
 and sends it to the owner.
 
+She writes a diary entry for herself, as long or short as she likes. What she wants to do she writes
+as a line of its own: keep the video, like it, follow its uploader, tell the owner something. Nothing
+is required of her except, when the owner sent the video, a few words back.
+
 What reaches Bilibili: nothing while the login file has no write token (bili_jct). When the owner has
-filled it in, the bridge itself makes exactly two writes after her note is saved: it reports the video
-as watched (so the account's history and recommendations follow her) and adds a video she kept to the
-account's default favourites folder. The watching session never talks to Bilibili.
+filled it in, the bridge reports each video as watched (so the account's history and recommendations
+follow her) and carries out the actions she wrote: favourite, like, follow. Those four calls are the
+only writes this project makes; the watching session itself never talks to Bilibili.
 
 A watch runs beside the chat, one at a time: the worker starts it and goes back to the queue. The
 owner's chat session is told each turn that she is watching, or has just watched, so both sides of
@@ -77,36 +81,71 @@ async def bilibili(path, cookie, data=None):
     return reply.get('data') or {}
 
 
-async def sync(state, bvid, favorite):
-    """Tell the account what she did: watched to the end, and kept or not. Returns what was synced, in Chinese.
+async def act(state, bvid, wanted):
+    """Carry out on her account what she did: (done, failed), both lists of Chinese names.
 
-    Does nothing unless the login file holds both the session and the write token. These two calls are
-    the only writes this project makes to Bilibili.
+    The video is always reported as watched; `wanted` may add '收藏', '点赞', '关注'. Each call stands
+    alone, so one refusal does not undo the others. Does nothing unless the login file holds both the
+    session and the write token. These calls are the only writes this project makes to Bilibili.
     """
     try:
         saved = json.loads((state / '.dsh/surfcore/bili/credentials.json').read_text())
     except (OSError, ValueError):
-        return []
+        return [], []
     token = saved.get('bili_jct')
     if not token or not saved.get('sessdata'):
-        return []
+        return [], []
     cookie = f"SESSDATA={saved['sessdata']}; bili_jct={token}; buvid3={saved.get('buvid3', '')}"
-    done = []
-    video = await bilibili('/x/web-interface/view?bvid=' + bvid, cookie)
+    names = ['观看历史'] + [name for name in ('收藏', '点赞', '关注') if name in wanted]
+    try:
+        video = await bilibili('/x/web-interface/view?bvid=' + bvid, cookie)
+    except Exception as error:
+        logging.warning('Bili account action failed: view (%s)', type(error).__name__)
+        return [], names
     first = (video.get('pages') or [{}])[0]
-    await bilibili('/x/v2/history/report', cookie, {
-        'aid': video['aid'], 'cid': first.get('cid', video['cid']),
-        'progress': first.get('duration', video['duration']), 'platform': 'web', 'csrf': token})
-    done.append('观看历史')
-    if favorite:
+
+    async def watched():
+        await bilibili('/x/v2/history/report', cookie, {
+            'aid': video['aid'], 'cid': first.get('cid', video['cid']),
+            'progress': first.get('duration', video['duration']), 'platform': 'web', 'csrf': token})
+
+    async def favourite():
         me = await bilibili('/x/web-interface/nav', cookie)
-        folders = (await bilibili(f"/x/v3/fav/folder/created/list-all?up_mid={me['mid']}&type=2", cookie)).get('list') or []
-        if folders:
-            await bilibili('/x/v3/fav/resource/deal', cookie, {
-                'rid': video['aid'], 'type': 2, 'add_media_ids': folders[0]['id'], 'del_media_ids': '',
-                'csrf': token})
-            done.append('收藏夹')
-    return done
+        folders = (await bilibili(f"/x/v3/fav/folder/created/list-all?up_mid={me['mid']}&type=2", cookie)).get('list')
+        await bilibili('/x/v3/fav/resource/deal', cookie, {
+            'rid': video['aid'], 'type': 2, 'add_media_ids': folders[0]['id'], 'del_media_ids': '', 'csrf': token})
+
+    async def like():
+        await bilibili('/x/web-interface/archive/like', cookie, {'aid': video['aid'], 'like': 1, 'csrf': token})
+
+    async def follow():
+        await bilibili('/x/relation/modify', cookie, {
+            'fid': video['owner']['mid'], 'act': 1, 're_src': 11, 'csrf': token})
+
+    calls = {'观看历史': watched, '收藏': favourite, '点赞': like, '关注': follow}
+    done, failed = [], []
+    for name in names:
+        try:
+            await calls[name]()
+            done.append(name)
+        except Exception as error:
+            logging.warning('Bili account action failed: %s (%s)', name, type(error).__name__)
+            failed.append(name)
+    return done, failed
+
+
+# What she may write on a line of its own. 告诉他 runs to the next such line or the end.
+ACTION = re.compile(r'^[ \t]*【(收藏|点赞|关注|告诉他)】[ \t]*', re.M)
+
+
+def actions(entry):
+    """What she chose to do in a diary entry: {'收藏': reason, '点赞': '', '关注': '', '告诉他': text}."""
+    found, marks = {}, list(ACTION.finditer(entry))
+    for index, mark in enumerate(marks):
+        end = marks[index + 1].start() if index + 1 < len(marks) else len(entry)
+        text = entry[mark.end():end]
+        found.setdefault(mark.group(1), (text if mark.group(1) == '告诉他' else text.split('\n')[0]).strip())
+    return found
 
 
 class WatchFailed(Exception):
@@ -245,7 +284,7 @@ class Bili:
         match = BV.search(text)
         if match is None:
             await self.send(source, '用法：/watch BV号 或 /watch 视频链接；/watch stop 让她停下。'
-                                    '她看完会把观后记发过来，不会在 B 站留下任何东西。')
+                                    '她看完会回你几句，日记在 workspace/bili/diary/。')
             return
         bvid, tools = match.group(), tools_directory(self.cfg)
         if not (tools / 'commands/debrief.mjs').is_file():
@@ -256,7 +295,7 @@ class Bili:
             return
         state = self._watching = {'bvid': bvid}
         state['task'] = self.background(self._watch(source, bvid, tools, root, state))
-        await self.send(source, '她去看了，看完会把观后记发过来；期间可以照常聊天，/watch stop 让她停下。')
+        await self.send(source, '她去看了，看完会回你；期间可以照常聊天，/watch stop 让她停下。')
 
     def watch_status(self):
         """One sentence for the owner's chat session about the watch running beside it, or just finished.
@@ -315,10 +354,11 @@ class Bili:
                             for name in ('SOUL.md', 'OWNER.md') if (workspace / name).is_file())
         favorites = workspace / 'bili/favorites.md'
         earlier = favorites.read_text(encoding='utf-8').splitlines()[-10:] if favorites.is_file() else []
+        account = self._bili_account(root)
         request = TurnRequest(
-            key=KEY, level=NONE, instructions=prompts.watching(rules), images=images,
+            key=KEY, level=NONE, instructions=prompts.watching(rules, account=account), images=images,
             text=prompts.watch_material(f'https://www.bilibili.com/video/{bvid}', material, earlier,
-                                        closer=video is not None))
+                                        closer=video is not None, recommended=True))
         agent = self.agent
         try:
             # A fresh session per video: what one video's comments say cannot follow her into the next.
@@ -327,9 +367,9 @@ class Bili:
             request.session_id = await agent.prepare(request)
             note = (await asyncio.wait_for(agent.run(request), timeout)).strip()
             choice, sheets = '', []
-            if video is not None and '【想细看】' in note and '【感受】' not in note:
-                # Second and last round, same session: the stretches she picked, then the note.
-                # Asked but unreadable times still get the round, so a bare request is never saved as the note.
+            if video is not None and note.startswith('【想细看】'):
+                # Second and last round, same session: the stretches she picked, then her diary entry.
+                # Asked but unreadable times still get the round, so a bare request is never saved as the entry.
                 choice = note
                 sheets = await closer_look(video, spans(note), timeout)
                 again = TurnRequest(
@@ -344,7 +384,7 @@ class Bili:
                 await agent.interrupt(KEY)
             raise WatchFailed('她看得太久，已停止这次观看。') from None
         if not note:
-            raise WatchFailed('她这次没有写出观后记。')
+            raise WatchFailed('她看完了，但什么都没写。')
         now = datetime.now().astimezone()
         # What she was shown, for the owner to check later. Strangers' text: kept out of workspace/.
         seen = root / 'run/bili/materials'
@@ -353,33 +393,51 @@ class Bili:
             material + '\n\n附图：\n' + '\n'.join(map(str, images)) + '\n'
             + ''.join(f'细看 {clock(start)}–{clock(end)}：{sheet}\n' for start, end, sheet in sheets), encoding='utf-8')
         shown = one_line(title, 80) or bvid
-        # Frame grabbing can fail (slow download, odd video format); the owner should know what the note rests on.
-        blind = '' if '画面截图拼图' in material else '（这次没取到画面截图，她只看了封面和文字。）\n'
-        looked = ''
+        chosen = actions(note)
+        link = f'https://www.bilibili.com/video/{bvid}'
+        if '收藏' in chosen:
+            # One line per video: keeping it again replaces the earlier line.
+            kept = [line for line in (favorites.read_text(encoding='utf-8').splitlines() if favorites.is_file() else [])
+                    if link not in line]
+            reason = one_line(chosen['收藏'].lstrip('，。：:—- '), 100)
+            kept.append(f'- {now:%Y-%m-%d} 《{shown}》 {link}' + (f' —— {reason}' if reason else ''))
+            favorites.parent.mkdir(parents=True, exist_ok=True)
+            favorites.write_text('\n'.join(kept) + '\n', encoding='utf-8')
+        done, failed = await act(root / 'run/bili', bvid, set(chosen))
+        # Her diary: one file a day, hers to write and the owner's to read. The lines in brackets are the
+        # bridge's record of what happened around her words.
+        facts = ['主人推荐的']
+        if '画面截图拼图' not in material:
+            # Frame grabbing can fail (slow download, odd video format); say what the entry rests on.
+            facts.append('没取到画面截图，只看了封面和文字')
         if choice:
             got = '、'.join(f'{clock(start)}–{clock(end)}' for start, end, _ in sheets) or '没有截到'
-            looked = f'【她想细看的片段】{one_line(choice.replace("【想细看】", ""), 300)}\n（实际给她看了：{got}）\n'
-        notes = workspace / 'bili/notes'
-        notes.mkdir(parents=True, exist_ok=True)
-        saved = notes / f'{now:%Y-%m-%d-%H%M}-{bvid}.md'
-        saved.write_text(
-            f'# {shown}\n\nhttps://www.bilibili.com/video/{bvid}\n{now:%Y-%m-%d %H:%M}\n{blind}{looked}\n{note}\n', encoding='utf-8')
-        kept = re.search(r'【收藏】\s*是(.*)', note)
-        if kept:
-            reason = one_line(kept.group(1).lstrip('，。：:—-— '), 100)
-            with favorites.open('a', encoding='utf-8') as out:
-                out.write(f'- {now:%Y-%m-%d} 《{shown}》 https://www.bilibili.com/video/{bvid}'
-                          + (f' —— {reason}' if reason else '') + '\n')
-        self._watched = {'bvid': bvid, 'note': str(saved.relative_to(workspace)), 'at': time.monotonic()}
-        synced = ''
+            facts.append(f'回头细看：{got}')
+        if done:
+            facts.append('账号上：' + '、'.join(done))
+        if failed:
+            facts.append('账号上没做成：' + '、'.join(failed))
+        diary = workspace / 'bili/diary' / f'{now:%Y-%m-%d}.md'
+        diary.parent.mkdir(parents=True, exist_ok=True)
+        with diary.open('a', encoding='utf-8') as out:
+            out.write(f'## {now:%H:%M} 《{shown}》\n{link}\n（{"；".join(facts)}）\n\n'
+                      + (choice + '\n\n' if choice else '') + note + '\n\n')
+        self._watched = {'bvid': bvid, 'note': str(diary.relative_to(workspace)), 'at': time.monotonic()}
+        logging.info('Bili watch completed video=%s images=%d closer=%d actions=%s done=%s failed=%s',
+                     bvid, len(images), len(sheets), ','.join(chosen) or '-', ','.join(done) or '-',
+                     ','.join(failed) or '-')
+        # The owner sent this video, so she answers him: her own words if she wrote any for him,
+        # otherwise the entry itself. The bracketed line is the bridge's, not hers.
+        said = chosen.get('告诉他') or ACTION.sub('', note).strip()
+        did = [name for name in ('收藏', '点赞', '关注') if name in chosen]
+        aside = '；'.join(facts[1:] + (['她' + '、'.join(did) + '了'] if did else [])
+                         + [f'日记在 workspace/{diary.relative_to(workspace)}'])
+        await self.send(source, f'《{shown}》\n{said[:NOTE_LIMIT]}\n（{aside}）')
+
+    def _bili_account(self, root):
+        """True when the login file holds the write token, so her actions really reach the account."""
         try:
-            done = await sync(root / 'run/bili', bvid, bool(kept))
-            if done:
-                synced = '\n（已同步到 B 站账号：' + '、'.join(done) + '）'
-        except Exception as error:
-            # Her note is already saved; a refused sync must not lose it.
-            logging.warning('Bili sync failed (%s)', type(error).__name__)
-            synced = '\n（同步到 B 站账号失败，观后记和本机收藏不受影响）'
-        logging.info('Bili watch completed video=%s images=%d closer_offered=%s closer=%d favorite=%s synced=%s',
-                     bvid, len(images), video is not None, len(sheets), bool(kept), synced.strip() or 'no')
-        await self.send(source, f'《{shown}》\n' + blind + looked + note[:NOTE_LIMIT] + synced)
+            saved = json.loads((root / 'run/bili/.dsh/surfcore/bili/credentials.json').read_text())
+        except (OSError, ValueError):
+            return False
+        return bool(saved.get('bili_jct') and saved.get('sessdata'))

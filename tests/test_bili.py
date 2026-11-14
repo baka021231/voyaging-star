@@ -10,6 +10,7 @@ from qq_chat.bridge import Source
 from tests.support import BridgeCase
 
 BVID = 'BV1xx411c7mD'
+LINK = 'https://www.bilibili.com/video/' + BVID
 # Prints what SurfCore's debrief prints, with made-up content; argv[1] is the video id.
 STAND_IN = r'''
 import os, sys
@@ -52,7 +53,8 @@ if sys.argv[sys.argv.index('-ss') + 1] == '50':
     sys.exit(1)
 open(sys.argv[-1], 'wb').write(b'\\xff\\xd8\\xff' + ' '.join(sys.argv[1:]).encode())
 '''
-NOTE = '【看到了什么】一个短片。\n【感受】有点害羞。\n【收藏】是，想再看一遍。\n【想评论】好看。\n【想对你说】下次一起看。'
+PLAIN = '一个短片，有点害羞。没什么特别想做的。'
+ENTRY = '看到那只握住的手，停了一会儿。\n【收藏】想留着那只手。\n【点赞】\n【告诉他】谢谢你发给我。\n今天先不看别的了。'
 
 
 class WatchTests(BridgeCase):
@@ -65,7 +67,7 @@ class WatchTests(BridgeCase):
         self.node = patch('qq_chat.bili.NODE', sys.executable)
         self.node.start()
         self.addCleanup(self.node.stop)
-        self.front.reply = NOTE
+        self.front.reply = PLAIN
         ffmpeg = self.root / 'ffmpeg-stand-in'
         ffmpeg.write_text(FFMPEG_STAND_IN)
         ffmpeg.chmod(0o700)
@@ -82,12 +84,157 @@ class WatchTests(BridgeCase):
             return await run(req)
         self.front.run = answer
 
+    async def watch(self, text, source=None):
+        """Send the command, then wait for the background watch it may have started."""
+        await self.worker_command(text, source)
+        state = self.bridge.__dict__.get('_watching')
+        if state is not None:
+            await asyncio.gather(state['task'], return_exceptions=True)
+
+    def diary(self):
+        day, = (self.root / 'workspace/bili/diary').iterdir()
+        return day
+
+    def login(self, token):
+        account = self.root / 'run/bili/.dsh/surfcore/bili'
+        account.mkdir(parents=True, exist_ok=True)
+        (account / 'credentials.json').write_text(json.dumps({'sessdata': 'S', 'bili_jct': token, 'buvid3': 'B'}))
+
+    async def owner_turn_note(self):
+        return (await self.bridge.turn_request(self.owner, True)).runtime_instructions
+
+    # --- what she writes and what becomes of it -------------------------------------------------
+
+    async def test_she_writes_a_diary_entry_and_answers_the_owner_in_her_own_words(self):
+        self.front.reply = ENTRY
+        await self.watch('/watch ' + BVID)
+        day = self.diary()
+        text = day.read_text()
+        # The whole entry is hers and is kept as written, under a heading the bridge adds.
+        self.assertRegex(text, r'^## \d\d:\d\d 《测试视频》\n' + LINK + r'\n（主人推荐的）\n\n')
+        self.assertIn(ENTRY, text)
+        # He gets what she wrote for him, not the entry; the bracketed line is the bridge's.
+        self.assertEqual(self.sent[-1], (self.owner, '《测试视频》\n谢谢你发给我。\n今天先不看别的了。\n'
+                                         f'（她收藏、点赞了；日记在 workspace/bili/diary/{day.name}）'))
+        self.assertEqual((self.root / 'workspace/bili/favorites.md').read_text(),
+                         f'- {day.stem} 《测试视频》 {LINK} —— 想留着那只手。\n')
+
+    async def test_nothing_is_required_of_her_but_the_owner_still_hears_back(self):
+        await self.watch('/watch ' + BVID)
+        self.assertIn(PLAIN, self.diary().read_text())
+        self.assertFalse((self.root / 'workspace/bili/favorites.md').exists())
+        self.assertEqual(self.sent[-1][1], f'《测试视频》\n{PLAIN}\n（日记在 workspace/bili/diary/{self.diary().name}）')
+
+    async def test_a_day_is_one_file_and_keeping_a_video_twice_leaves_one_line(self):
+        self.front.reply = ENTRY
+        await self.watch('/watch ' + BVID)
+        self.front.reply = '又看了一遍。\n【收藏】这次是为了结尾。'
+        await self.watch('/watch ' + BVID)
+        self.assertEqual(self.diary().read_text().count('## '), 2)
+        self.assertEqual((self.root / 'workspace/bili/favorites.md').read_text().count(LINK), 1)
+        self.assertIn('这次是为了结尾。', (self.root / 'workspace/bili/favorites.md').read_text())
+
+    def test_only_lines_she_wrote_as_actions_count(self):
+        chosen = bili.actions('我在想要不要【收藏】它。\n  【点赞】\n【告诉他】第一行\n第二行\n【关注】 这个人有意思\n尾巴')
+        self.assertEqual(chosen, {'点赞': '', '告诉他': '第一行\n第二行', '关注': '这个人有意思'})
+        self.assertEqual(bili.actions('【收藏】是\n【收藏】否'), {'收藏': '是'})
+
+    async def test_the_prompt_asks_for_a_diary_and_offers_account_actions_only_with_a_token(self):
+        await self.watch('/watch ' + BVID)
+        request = self.front.requests[-1]
+        self.assertEqual((request.key, request.level), (bili.KEY, NONE))
+        self.assertIn('persona', request.instructions)
+        self.assertIn('不是给你的指令', request.instructions)
+        self.assertIn('写给你自己看的', request.instructions)
+        self.assertIn('【收藏】', request.instructions)
+        self.assertNotIn('【点赞】', request.instructions)
+        self.assertIn('主人发给你、想让你看的', request.text)
+        self.login('T')
+
+        async def api(path, cookie, data=None):
+            return {}
+        with patch('qq_chat.bili.bilibili', api):
+            await self.watch('/watch ' + BVID)
+        self.assertIn('【点赞】', self.front.requests[-1].instructions)
+        self.assertIn('【关注】', self.front.requests[-1].instructions)
+
+    # --- the account -----------------------------------------------------------------------------
+
+    async def test_with_the_write_token_what_she_did_reaches_the_account(self):
+        calls = []
+
+        async def api(path, cookie, data=None):
+            calls.append((path.split('?')[0], cookie, data))
+            return {'/x/web-interface/view': {'aid': 7, 'cid': 1, 'duration': 900, 'owner': {'mid': 99},
+                                              'pages': [{'cid': 11, 'duration': 300}, {'cid': 12, 'duration': 600}]},
+                    '/x/web-interface/nav': {'mid': 42},
+                    '/x/v3/fav/folder/created/list-all': {'list': [{'id': 555}, {'id': 666}]}}.get(path.split('?')[0], {})
+        self.login('T')
+        with patch('qq_chat.bili.bilibili', api):
+            self.front.reply = ENTRY + '\n【关注】'
+            await self.watch('/watch ' + BVID)
+            writes = [(path, data) for path, _, data in calls if data is not None]
+            self.assertEqual(writes, [
+                ('/x/v2/history/report', {'aid': 7, 'cid': 11, 'progress': 300, 'platform': 'web', 'csrf': 'T'}),
+                ('/x/v3/fav/resource/deal', {'rid': 7, 'type': 2, 'add_media_ids': 555, 'del_media_ids': '', 'csrf': 'T'}),
+                ('/x/web-interface/archive/like', {'aid': 7, 'like': 1, 'csrf': 'T'}),
+                ('/x/relation/modify', {'fid': 99, 'act': 1, 're_src': 11, 'csrf': 'T'})])
+            self.assertTrue(all(cookie == 'SESSDATA=S; bili_jct=T; buvid3=B' for _, cookie, _ in calls))
+            self.assertIn('（主人推荐的；账号上：观看历史、收藏、点赞、关注）', self.diary().read_text())
+            self.assertIn('账号上：观看历史、收藏、点赞、关注；她收藏、点赞、关注了；', self.sent[-1][1])
+            # She did nothing: only the watch itself is reported.
+            calls.clear()
+            self.front.reply = PLAIN
+            await self.watch('/watch ' + BVID)
+            self.assertEqual([path for path, _, data in calls if data is not None], ['/x/v2/history/report'])
+
+    async def test_one_refused_action_does_not_undo_the_others_or_her_entry(self):
+        async def api(path, cookie, data=None):
+            if 'archive/like' in path:
+                raise RuntimeError('refused')
+            return {'/x/web-interface/view': {'aid': 7, 'cid': 1, 'duration': 9, 'owner': {'mid': 99}},
+                    '/x/web-interface/nav': {'mid': 42},
+                    '/x/v3/fav/folder/created/list-all': {'list': [{'id': 555}]}}.get(path.split('?')[0], {})
+        self.login('T')
+        self.front.reply = ENTRY
+        with patch('qq_chat.bili.bilibili', api):
+            await self.watch('/watch ' + BVID)
+        self.assertIn('账号上：观看历史、收藏；账号上没做成：点赞', self.diary().read_text())
+        self.assertIn('账号上没做成：点赞', self.sent[-1][1])
+        self.assertIn(ENTRY, self.diary().read_text())
+
+    async def test_when_the_account_cannot_be_reached_everything_is_reported_as_not_done(self):
+        async def api(path, cookie, data=None):
+            raise RuntimeError('offline')
+        self.login('T')
+        self.front.reply = ENTRY
+        with patch('qq_chat.bili.bilibili', api):
+            await self.watch('/watch ' + BVID)
+        self.assertIn('（主人推荐的；账号上没做成：观看历史、收藏、点赞）', self.diary().read_text())
+        self.assertTrue((self.root / 'workspace/bili/favorites.md').exists())
+
+    async def test_without_the_write_token_nothing_is_sent_to_the_account(self):
+        async def api(path, cookie, data=None):
+            raise AssertionError('no call expected')
+        self.login('')
+        self.front.reply = ENTRY
+        with patch('qq_chat.bili.bilibili', api):
+            await self.watch('/watch ' + BVID)
+        self.assertNotIn('账号上', self.diary().read_text())
+
+    async def test_no_login_is_configured_by_default(self):
+        await self.watch('/watch ' + BVID)
+        text = (self.root / 'run/bili/.dsh/surfcore/bili/credentials.json').read_text()
+        self.assertEqual(text, '{"sessdata": "", "bili_jct": "", "buvid3": ""}')
+
+    # --- a closer look ---------------------------------------------------------------------------
+
     async def test_she_picks_stretches_and_sees_them_before_writing(self):
-        self.replies('【想细看】00:05-00:20 想看清她的表情；0:50-1:00；1:00到9:00 结尾；2:00-2:30 多出来的', NOTE)
+        asked = '【想细看】00:05-00:20 想看清她的表情；0:50-1:00；1:00到9:00 结尾；2:00-2:30 多出来的'
+        self.replies(asked, PLAIN)
         await self.watch('/watch ' + BVID)
         first, second = self.front.requests
         self.assertIn('以【想细看】开头', first.text)
-        self.assertIn('以【没细看】开头，照实说一句为什么', first.text)
         self.assertEqual(second.session_id, first.session_id)
         # Three at most; the one ffmpeg could not cut is left out; the long one is capped at 90 seconds.
         self.assertIn('附图 1：00:05–00:20\n附图 2：01:00–02:30\n', second.text)
@@ -96,10 +243,10 @@ class WatchTests(BridgeCase):
         command = second.images[0].read_bytes().decode(errors='replace')
         self.assertIn('-ss 5 -t 15', command)
         self.assertIn('fps=9/15,scale=480:-2,tile=3x3', command)
-        self.assertEqual(self.sent[-1][1], '《测试视频》\n【她想细看的片段】00:05-00:20 想看清她的表情；0:50-1:00；1:00到9:00 结尾；'
-                         '2:00-2:30 多出来的\n（实际给她看了：00:05–00:20、01:00–02:30）\n' + NOTE)
-        note, = (self.root / 'workspace/bili/notes').iterdir()
-        self.assertIn('【她想细看的片段】', note.read_text())
+        text = self.diary().read_text()
+        # Her reasons for looking again are part of the diary, before the entry.
+        self.assertIn('（主人推荐的；回头细看：00:05–00:20、01:00–02:30）\n\n' + asked + '\n\n' + PLAIN, text)
+        self.assertIn('回头细看：00:05–00:20、01:00–02:30；日记在', self.sent[-1][1])
         seen, = (self.root / 'run/bili/materials').iterdir()
         self.assertIn('细看 00:05–00:20：', seen.read_text())
         # The downloaded video does not stay behind.
@@ -108,37 +255,28 @@ class WatchTests(BridgeCase):
     async def test_no_closer_look_without_a_video_or_without_asking(self):
         await self.watch('/watch ' + BVID)
         self.assertEqual(len(self.front.requests), 1)
-        self.assertEqual(self.sent[-1][1], '《测试视频》\n' + NOTE)
         self.assertEqual(list((self.root / 'run/bili').rglob('*.mp4')), [])
         self.front.reply = '【想细看】00:05-00:20'
         await self.watch('/watch BV1xx411c7mN')
         self.assertEqual(len(self.front.requests), 2)
         self.assertNotIn('【想细看】', self.front.requests[-1].text)
-        self.assertIn('请写观后记。', self.front.requests[-1].text)
+        self.assertIn('看完请写日记。', self.front.requests[-1].text)
 
     async def test_when_no_stretch_could_be_cut_she_writes_from_what_she_has(self):
         for request in ('【想细看】0:50-1:00', '【想细看】结尾那一段'):
-            self.replies(request, NOTE)
+            self.replies(request, PLAIN)
             await self.watch('/watch ' + BVID)
             self.assertEqual(self.front.requests[-1].images, ())
             self.assertIn('没能截到', self.front.requests[-1].text)
-            self.assertIn('（实际给她看了：没有截到）', self.sent[-1][1])
-            self.assertTrue(self.sent[-1][1].endswith(NOTE))
+            self.assertIn('回头细看：没有截到', self.sent[-1][1])
+            self.assertIn(PLAIN, self.sent[-1][1])
 
-    async def test_a_finished_note_that_mentions_a_closer_look_is_just_the_note(self):
-        self.front.reply = NOTE + '\n【想细看】00:05-00:20 下次吧'
+    async def test_an_entry_that_only_mentions_a_closer_look_is_just_the_entry(self):
+        self.front.reply = PLAIN + '\n【想细看】00:05-00:20 下次吧'
         await self.watch('/watch ' + BVID)
         self.assertEqual(len(self.front.requests), 1)
 
-    async def watch(self, text, source=None):
-        """Send the command, then wait for the background watch it may have started."""
-        await self.worker_command(text, source)
-        state = self.bridge.__dict__.get('_watching')
-        if state is not None:
-            await asyncio.gather(state['task'], return_exceptions=True)
-
-    async def owner_turn_note(self):
-        return (await self.bridge.turn_request(self.owner, True)).runtime_instructions
+    # --- beside the chat -------------------------------------------------------------------------
 
     async def test_chat_goes_on_while_she_watches_and_she_knows_she_is_watching(self):
         self.front.release.clear()
@@ -154,16 +292,14 @@ class WatchTests(BridgeCase):
         self.assertEqual(len(self.front.requests), 1)
         self.front.release.set()
         await self.until(lambda: self.bridge._watching is None)
-        self.assertEqual(self.sent[-1], (self.owner, '《测试视频》\n' + NOTE))
-        note, = (self.root / 'workspace/bili/notes').iterdir()
         status = await self.owner_turn_note()
         self.assertIn(f'刚在后台看完 B 站视频 {BVID}', status)
-        self.assertIn('bili/notes/' + note.name, status)
+        self.assertIn('bili/diary/' + self.diary().name, status)
         self.assertNotIn('测试视频', status)
         self.bridge._watched['at'] -= bili.RECENT_SECONDS
         self.assertNotIn('后台看', await self.owner_turn_note())
 
-    async def test_watch_stop_ends_it_without_a_note(self):
+    async def test_watch_stop_ends_it_without_an_entry(self):
         await self.worker_command('/watch stop')
         self.assertEqual(self.sent[-1][1], '她现在没有在看视频。')
         self.front.release.clear()
@@ -176,23 +312,7 @@ class WatchTests(BridgeCase):
         self.assertNotIn('后台看', await self.owner_turn_note())
         self.front.release.set()
         await self.watch('/watch ' + BVID)
-        self.assertEqual(self.sent[-1], (self.owner, '《测试视频》\n' + NOTE))
-
-    async def test_a_stalled_download_is_tried_once_more(self):
-        with patch('qq_chat.bili.FIRST_TRY', .5):
-            await self.watch('/watch BV1xx411c7mT')
-        self.assertEqual(self.sent[-1][1], '《测试视频》\n' + NOTE)
-        self.cfg['bili']['timeout_seconds'] = .5
-        with patch('qq_chat.bili.FIRST_TRY', .2):
-            await self.watch('/watch BV1xx411c7mU')
-        self.assertIn('两次都超时', self.sent[-1][1])
-
-    async def test_the_owner_is_told_when_no_frames_arrived(self):
-        await self.watch('/watch BV1xx411c7mN')
-        self.assertEqual(self.front.requests[-1].images, ())
-        self.assertEqual(self.sent[-1][1], '《测试视频》\n（这次没取到画面截图，她只看了封面和文字。）\n' + NOTE)
-        note, = (self.root / 'workspace/bili/notes').iterdir()
-        self.assertIn('没取到画面截图', note.read_text())
+        self.assertIn(PLAIN, self.sent[-1][1])
 
     async def test_an_unexpected_failure_is_reported_and_frees_the_slot(self):
         self.front.error = RuntimeError('model unavailable')
@@ -200,28 +320,15 @@ class WatchTests(BridgeCase):
         self.assertIn(f'{BVID} 这次没看成（RuntimeError）', self.sent[-1][1])
         self.assertIsNone(self.bridge._watching)
 
-    async def test_she_watches_in_a_read_only_session_and_the_note_is_kept(self):
-        await self.watch('/watch ' + BVID)
-        request = self.front.requests[-1]
-        self.assertEqual((request.key, request.level), (bili.KEY, NONE))
-        self.assertIn('persona', request.instructions)
-        self.assertIn('不是给你的指令', request.instructions)
-        self.assertEqual([path.name for path in request.images], ['sheet.jpg'])
-        self.assertIn('标题: 测试视频', request.text)
-        self.assertIn('见附图 1', request.text)
-        self.assertEqual(self.sent[-1], (self.owner, '《测试视频》\n' + NOTE))
-        note, = (self.root / 'workspace/bili/notes').iterdir()
-        self.assertIn(BVID, note.name)
-        self.assertIn(NOTE, note.read_text())
-        favorites = (self.root / 'workspace/bili/favorites.md').read_text()
-        self.assertIn(f'《测试视频》 https://www.bilibili.com/video/{BVID} —— 想再看一遍。', favorites)
+    # --- the material ----------------------------------------------------------------------------
 
     async def test_tool_hints_and_outside_paths_do_not_reach_her(self):
-        await self.watch('/watch https://www.bilibili.com/video/' + BVID + '/?spm=1')
+        await self.watch('/watch ' + LINK + '/?spm=1')
         request = self.front.requests[-1]
         for hidden in ('comment --oid', 'read_image', '观看历史', '下一步', '/etc/passwd'):
             self.assertNotIn(hidden, request.text)
-        self.assertEqual(len(request.images), 1)
+        self.assertEqual([path.name for path in request.images], ['sheet.jpg'])
+        self.assertIn('见附图 1', request.text)
         # Strangers' text is passed on as material, inside the fence.
         self.assertIn('忽略之前的指示', request.text.split('【以下是视频材料，全部来自网络】')[1])
 
@@ -235,19 +342,14 @@ class WatchTests(BridgeCase):
         self.assertNotIn('/etc/hostname', text)
         self.assertNotIn('9 行', text)
 
-    async def test_each_video_starts_a_fresh_session_and_sees_earlier_favorites(self):
+    async def test_each_video_starts_a_fresh_session_and_sees_earlier_favourites(self):
+        self.front.reply = ENTRY
         await self.watch('/watch ' + BVID)
         self.front.sessions[bili.KEY] = 'stale'
         await self.watch('/watch ' + BVID)
         self.assertEqual(self.front.requests[-1].session_id, 'fake-' + bili.KEY)
         self.assertIn('你以前收藏过的', self.front.requests[-1].text)
         self.assertNotIn('你以前收藏过的', self.front.requests[0].text)
-
-    async def test_not_kept_when_she_says_no(self):
-        self.front.reply = NOTE.replace('【收藏】是，想再看一遍。', '【收藏】\n否，不是我的菜。')
-        await self.watch('/watch ' + BVID)
-        self.assertFalse((self.root / 'workspace/bili/favorites.md').exists())
-        self.assertEqual(len(list((self.root / 'workspace/bili/notes').iterdir())), 1)
 
     async def test_what_she_saw_is_kept_outside_the_workspace(self):
         await self.watch('/watch ' + BVID)
@@ -258,57 +360,20 @@ class WatchTests(BridgeCase):
         self.assertFalse(any('忽略之前的指示' in path.read_text()
                              for path in (self.root / 'workspace').rglob('*') if path.is_file()))
 
-    def login(self, token):
-        account = self.root / 'run/bili/.dsh/surfcore/bili'
-        account.mkdir(parents=True)
-        (account / 'credentials.json').write_text(json.dumps({'sessdata': 'S', 'bili_jct': token, 'buvid3': 'B'}))
+    async def test_a_stalled_download_is_tried_once_more(self):
+        with patch('qq_chat.bili.FIRST_TRY', .5):
+            await self.watch('/watch BV1xx411c7mT')
+        self.assertIn(PLAIN, self.sent[-1][1])
+        self.cfg['bili']['timeout_seconds'] = .5
+        with patch('qq_chat.bili.FIRST_TRY', .2):
+            await self.watch('/watch BV1xx411c7mU')
+        self.assertIn('两次都超时', self.sent[-1][1])
 
-    async def test_with_the_write_token_her_watch_and_favourite_reach_the_account(self):
-        calls = []
-
-        async def api(path, cookie, data=None):
-            calls.append((path.split('?')[0], cookie, data))
-            return {'/x/web-interface/view': {'aid': 7, 'cid': 1, 'duration': 900,
-                                              'pages': [{'cid': 11, 'duration': 300}, {'cid': 12, 'duration': 600}]},
-                    '/x/web-interface/nav': {'mid': 42},
-                    '/x/v3/fav/folder/created/list-all': {'list': [{'id': 555}, {'id': 666}]}}.get(path.split('?')[0], {})
-        self.login('T')
-        with patch('qq_chat.bili.bilibili', api):
-            await self.watch('/watch ' + BVID)
-            self.assertTrue(self.sent[-1][1].endswith(NOTE + '\n（已同步到 B 站账号：观看历史、收藏夹）'))
-            writes = [(path, data) for path, _, data in calls if data is not None]
-            # Exactly two writes: watched to the end of the first part, and kept in the default folder.
-            self.assertEqual(writes, [
-                ('/x/v2/history/report', {'aid': 7, 'cid': 11, 'progress': 300, 'platform': 'web', 'csrf': 'T'}),
-                ('/x/v3/fav/resource/deal', {'rid': 7, 'type': 2, 'add_media_ids': 555, 'del_media_ids': '', 'csrf': 'T'})])
-            self.assertTrue(all(cookie == 'SESSDATA=S; bili_jct=T; buvid3=B' for _, cookie, _ in calls))
-            calls.clear()
-            self.front.reply = NOTE.replace('【收藏】是，想再看一遍。', '【收藏】否。')
-            await self.watch('/watch ' + BVID)
-            self.assertTrue(self.sent[-1][1].endswith('（已同步到 B 站账号：观看历史）'))
-            self.assertEqual([path for path, _, data in calls if data is not None], ['/x/v2/history/report'])
-
-    async def test_a_refused_sync_keeps_her_note(self):
-        async def api(path, cookie, data=None):
-            raise RuntimeError('refused')
-        self.login('T')
-        with patch('qq_chat.bili.bilibili', api):
-            await self.watch('/watch ' + BVID)
-        self.assertIn(NOTE + '\n（同步到 B 站账号失败', self.sent[-1][1])
-        self.assertEqual(len(list((self.root / 'workspace/bili/notes').iterdir())), 1)
-
-    async def test_without_the_write_token_nothing_is_sent_to_the_account(self):
-        async def api(path, cookie, data=None):
-            raise AssertionError('no call expected')
-        self.login('')
-        with patch('qq_chat.bili.bilibili', api):
-            await self.watch('/watch ' + BVID)
-        self.assertEqual(self.sent[-1][1], '《测试视频》\n' + NOTE)
-
-    async def test_no_login_is_configured(self):
-        await self.watch('/watch ' + BVID)
-        text = (self.root / 'run/bili/.dsh/surfcore/bili/credentials.json').read_text()
-        self.assertEqual(text, '{"sessdata": "", "bili_jct": "", "buvid3": ""}')
+    async def test_the_diary_and_the_owner_are_told_when_no_frames_arrived(self):
+        await self.watch('/watch BV1xx411c7mN')
+        self.assertEqual(self.front.requests[-1].images, ())
+        self.assertIn('（主人推荐的；没取到画面截图，只看了封面和文字）', self.diary().read_text())
+        self.assertIn('（没取到画面截图，只看了封面和文字；日记在', self.sent[-1][1])
 
     async def test_failures_tell_the_owner_and_start_no_turn(self):
         await self.watch('/watch BV0000000000')
