@@ -3,7 +3,7 @@
 This file is the orchestration: who may do what, how one turn is assembled and run, and the two loops
 (session() receives, worker() answers). The parts with a job of their own live next door and Bridge
 inherits them: onebot (sending), store (database, group context), media (images, attachments),
-commands (owner commands), turns (per-chat lock, /stop, deliver) and bili (/watch).
+commands (owner commands), turns (per-chat lock, /stop, deliver), bili (/watch) and bili_wake (her own time there).
 """
 import asyncio
 import contextlib
@@ -19,6 +19,7 @@ from .agents.base import MissingSession, Interrupted
 from .agents.config import legacy_codex_profile, settings
 from .agents.state import AgentState
 from .bili import Bili
+from .bili_wake import BiliWake
 from .commands import Commands
 from .front_switch import command as switch_front_command
 from .media import Media
@@ -45,7 +46,7 @@ CONFIG = BASE / "config.json"
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 
-class Bridge(Turns, OneBot, Store, Media, Commands, Bili):
+class Bridge(Turns, OneBot, Store, Media, Commands, Bili, BiliWake):
     def blocked(self, source):
         return blocked_group_sender(source, self.cfg)
 
@@ -526,6 +527,8 @@ class Bridge(Turns, OneBot, Store, Media, Commands, Bili):
         if self.cfg.get('memory', {}).get('enabled', True) or self.speak_enabled():
             await self.tool_server.start()
         logging.info("App Server initialized")
+        # Her own time on Bilibili; does nothing unless bili.wake is configured.
+        self.background(self.wake_loop(BASE))
         while True:
             try:
                 async with connect(self.cfg["ws_url"], additional_headers={

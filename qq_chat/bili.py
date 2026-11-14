@@ -291,7 +291,8 @@ class Bili:
             await self.send(source, '还没有安装 B 站只读工具（默认在 ~/tools/surfcore）。')
             return
         if current is not None:
-            await self.send(source, f'她正在看 {current["bvid"]}，一次只看一个；等她看完，或用 /watch stop 让她停下。')
+            busy = '自己在逛 B 站' if current.get('own') else f'在看 {current["bvid"]}'
+            await self.send(source, f'她正{busy}，一次只看一个；等她看完，或用 /watch stop 让她停下。')
             return
         state = self._watching = {'bvid': bvid}
         state['task'] = self.background(self._watch(source, bvid, tools, root, state))
@@ -305,7 +306,7 @@ class Bili:
         """
         current, last = self.__dict__.get('_watching'), self.__dict__.get('_watched')
         if current is not None:
-            return prompts.watching_now(current['bvid'])
+            return prompts.browsing_now() if current.get('own') else prompts.watching_now(current['bvid'])
         if last is not None and time.monotonic() - last['at'] < RECENT_SECONDS:
             return prompts.watched(last['bvid'], last['note'])
         return ''
@@ -330,7 +331,12 @@ class Bili:
             if self.__dict__.get('_watching') is state:
                 self._watching = None
 
-    async def _watch_video(self, source, bvid, tools, root):
+    async def _watch_video(self, source, bvid, tools, root, *, session=None):
+        """Fetch one video and let her watch it.
+
+        session: an ongoing watching session (her own evening); the video is then one she picked herself.
+        Without it the owner sent the video and a fresh session is started for it.
+        """
         timeout = float((self.cfg.get('bili') or {}).get('timeout_seconds', 300))
         # The video download sometimes stalls (seen twice on 2026-11-13; normal is 10-30 s), and SurfCore
         # sets no timeout on it. Give up on a stalled attempt early and try once more with the full time.
@@ -343,12 +349,13 @@ class Bili:
         except asyncio.TimeoutError:
             raise WatchFailed('取视频材料两次都超时，请稍后再试。') from None
         try:
-            await self._watch_material(source, bvid, root, timeout, material, images, title, video)
+            await self._watch_material(source, bvid, root, timeout, material, images, title, video, session)
         finally:
             if video is not None:
                 video.unlink(missing_ok=True)
 
-    async def _watch_material(self, source, bvid, root, timeout, material, images, title, video):
+    async def _watch_material(self, source, bvid, root, timeout, material, images, title, video, session=None):
+        recommended = session is None
         workspace = root / 'workspace'
         rules = '\n\n'.join(name + '\n' + (workspace / name).read_text(encoding='utf-8')
                             for name in ('SOUL.md', 'OWNER.md') if (workspace / name).is_file())
@@ -358,13 +365,17 @@ class Bili:
         request = TurnRequest(
             key=KEY, level=NONE, instructions=prompts.watching(rules, account=account), images=images,
             text=prompts.watch_material(f'https://www.bilibili.com/video/{bvid}', material, earlier,
-                                        closer=video is not None, recommended=True))
+                                        closer=video is not None, recommended=recommended))
         agent = self.agent
         try:
-            # A fresh session per video: what one video's comments say cannot follow her into the next.
-            await agent.reset(KEY)
-            self.db.commit()
-            request.session_id = await agent.prepare(request)
+            if recommended:
+                # A fresh session per video: what one video's comments say cannot follow her into the next.
+                await agent.reset(KEY)
+                self.db.commit()
+                request.session_id = await agent.prepare(request)
+            else:
+                # Her own evening is one session, so she remembers what she just watched; it ends with the evening.
+                request.session_id = session
             note = (await asyncio.wait_for(agent.run(request), timeout)).strip()
             choice, sheets = '', []
             if video is not None and note.startswith('【想细看】'):
@@ -406,7 +417,7 @@ class Bili:
         done, failed = await act(root / 'run/bili', bvid, set(chosen))
         # Her diary: one file a day, hers to write and the owner's to read. The lines in brackets are the
         # bridge's record of what happened around her words.
-        facts = ['主人推荐的']
+        facts = ['主人推荐的' if recommended else '自己找来看的']
         if '画面截图拼图' not in material:
             # Frame grabbing can fail (slow download, odd video format); say what the entry rests on.
             facts.append('没取到画面截图，只看了封面和文字')
@@ -426,8 +437,11 @@ class Bili:
         logging.info('Bili watch completed video=%s images=%d closer=%d actions=%s done=%s failed=%s',
                      bvid, len(images), len(sheets), ','.join(chosen) or '-', ','.join(done) or '-',
                      ','.join(failed) or '-')
-        # The owner sent this video, so she answers him: her own words if she wrote any for him,
-        # otherwise the entry itself. The bracketed line is the bridge's, not hers.
+        # A video the owner sent always gets an answer: her own words if she wrote any for him, otherwise
+        # the entry itself. One she found herself reaches him only if she chose to tell him.
+        # The bracketed line is the bridge's, not hers.
+        if not recommended and not chosen.get('告诉他'):
+            return
         said = chosen.get('告诉他') or ACTION.sub('', note).strip()
         did = [name for name in ('收藏', '点赞', '关注') if name in chosen]
         aside = '；'.join(facts[1:] + (['她' + '、'.join(did) + '了'] if did else [])

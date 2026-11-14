@@ -37,6 +37,7 @@ NapCat ◀──WebSocket── Bridge.send()  全局锁，间隔随机 2～3 �
 | `media.py` | `Media`：接收附件、图片和引用里的参考图片（含整组时间预算） | `files`、`images`、`prompts`、`message_policy` |
 | `commands.py` | `Commands`：不经过模型的命令（`/ping`、`/new`、`/session`、黑名单、`/help`、模型与强度）和 `/help` 文字 | `turns`、`message_policy` |
 | `bili.py` | `Bili`：`/watch`。后台任务运行仓库外的 SurfCore 只读命令取视频材料，交给主人 agent 的只读会话，保存观后记和收藏；`watch_status()` 给主人会话一句当前状态 | `prompts`、`agents` |
+| `bili_wake.py` | `BiliWake`：她自己的 B 站时间。按 `bili.wake` 的窗口每天随机醒一次，搜集候选视频，让她在只读会话里挑，再调用 `bili` 的观看流程 | `bili`、`prompts`、`agents`、`config_file`、`message_policy` |
 | `message_policy.py` | `Source` / `Incoming`、事件解析、主人判断、会话键及发言人标签；不访问 Bridge 状态 | `message_text`、`message_references`、`moderation` |
 | `codex_app.py` | `AppServer`：JSON-RPC 客户端、单轮对话事件处理；`progress_text` 生成进度文本、传递执行活动事件 | `agents.base`、`memory_progress` |
 | `agents/base.py` | `Agent`、`TurnRequest`、权限级别常量和返回值上限；不负责 QQ 策略 | 无 |

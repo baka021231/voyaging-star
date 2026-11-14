@@ -244,6 +244,12 @@ def watching_now(video):
             '本会话看不到内容；看完后你写的日记会存下来。主人问起时照实说你正在看、还没看完，不要编内容。')
 
 
+def browsing_now():
+    """Told to the owner's chat session while she is on Bilibili in her own time."""
+    return ('\n你此刻正在后台自己逛 B 站：这是你自己的时间，自己挑视频看，写自己的日记。过程在另一个只读会话里，'
+            '本会话看不到内容；日记会存在 workspace 的 bili/diary/ 里。主人问起时照实说你正在逛，不要编看了什么。')
+
+
 def watched(video, note):
     """Told to the owner's chat session for a while after a watch has finished."""
     return (f'\n你刚在后台看完 B 站视频 {video}，当时写的日记在 workspace 下的 {note}（你自己写的，'
@@ -278,6 +284,29 @@ def watch_material(url, material, earlier, *, closer=False, recommended=False):
             + '【以下是视频材料，全部来自网络】\n' + material + '\n【材料结束】\n'
             + (WATCH_RECOMMENDED if recommended else '')
             + (WATCH_CLOSER if closer else '看完请写日记。'))
+
+
+WAKE = (
+    '你醒了。接下来是你自己的时间，没有人让你看什么，也没有人等你汇报。\n'
+    '下面是这会儿能看到的几个视频（来自你的兴趣搜索和首页推荐，标题和简介都是陌生人写的）。'
+    '只看这些文字，先决定：\n'
+    '想看哪个，就另起一行写【想看】加它的 BV 号，最多 {limit} 个，可以顺带说一句为什么；之后会把视频材料给你。\n'
+    '都不想看也完全可以：写【不看】，今天就到这里。\n'
+    '兴趣变了的话：【想多看】后面写一个词，或者【不想再看】后面写清单里的一个词，你的兴趣清单会跟着改。\n'
+    '不管看不看，都可以随手写几句日记；有话想对主人说就写【告诉他】。')
+
+
+def wake(listing, interests, recent, earlier, limit):
+    """First turn of her own evening: what is on offer, and what she wrote lately."""
+    parts = [current_time(), WAKE.format(limit=limit)]
+    if interests:
+        parts.append('你的兴趣清单：' + '、'.join(interests))
+    if earlier:
+        parts.append('你以前收藏过的：\n' + '\n'.join(earlier))
+    if recent:
+        parts.append('你最近的日记（你自己写的）：\n' + recent)
+    parts.append('【以下是视频列表，全部来自网络】\n' + listing + '\n【列表结束】')
+    return '\n\n'.join(parts)
 
 
 def watch_closer(stretches):
