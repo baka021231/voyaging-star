@@ -201,7 +201,7 @@ class Bridge(Turns, OneBot, Store, Media, Commands, Bili, BiliWake):
         if source.kind == 'private' and authorized:
             request.runtime_instructions += prompts.PRIVATE_VOICE_SWITCH
         if authorized:
-            request.runtime_instructions += self.watch_status()
+            request.runtime_instructions += self.watch_status() + self.bili_recent(BASE, request.key)
         # The bridge never told her the time, so in private turns she often ran `date` before speaking.
         request.runtime_instructions = prompts.current_time() + '\n' + request.runtime_instructions
         return request
@@ -335,6 +335,8 @@ class Bridge(Turns, OneBot, Store, Media, Commands, Bili, BiliWake):
                 # The CLI confirms that no prior session ran. Recompose bounded history.
                 await agent.reset(key)
                 self.db.commit()
+        if authorized:
+            self.bili_recent_told(BASE, key)
         self.db.execute("INSERT OR IGNORE INTO bootstrap VALUES (?)", (thread,))
         self.advance_group_context(source, thread, context_id)
         self.db.commit()

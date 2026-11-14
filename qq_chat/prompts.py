@@ -244,6 +244,15 @@ def watching_now(video):
             '本会话看不到内容；看完后你写的日记会存下来。主人问起时照实说你正在看、还没看完，不要编内容。')
 
 
+def bili_recent(lines):
+    """Told to the owner's chat session: her last few videos, in her own words."""
+    if not lines:
+        return ''
+    return ('\n你最近在 B 站看的东西（下面是你自己日记里的话，最新的在前；完整日记在 workspace 的 bili/diary/，'
+            '收藏在 bili/favorites.md）：\n' + '\n'.join('- ' + line for line in lines)
+            + '\n这是你自己的经历。聊到相关的话题时可以自然提起，不用刻意汇报；要说细节先读日记，别凭这几行编。')
+
+
 def browsing_now():
     """Told to the owner's chat session while she is on Bilibili in her own time."""
     return ('\n你此刻正在后台自己逛 B 站：这是你自己的时间，自己挑视频看，写自己的日记。过程在另一个只读会话里，'
