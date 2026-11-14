@@ -155,6 +155,9 @@ class WakeTests(BridgeCase):
         self.assertIn('## 20:59 醒了\n（自己的时间；看了 2 个视频的标题和简介；挑了 1 个；兴趣加了“手书”）\n\n今天想看点轻松的。', text)
         self.assertIn('（自己找来看的）\n\n看完了，一般。', text)
         self.assertIn('- 手书', (self.root / 'workspace/bili/interests.md').read_text())
+        offer, = (self.root / 'run/bili/materials').glob('*-offer.txt')
+        self.assertIn(f'{TWO} 《第二个》\n  UP：乙　时长：5:00　播放：20　来源：首页推荐', offer.read_text())
+        self.assertTrue(offer.read_text().endswith(f'她挑了：{ONE}\n'))
         # Nobody asked her to, so nobody is told unless she says so.
         self.assertEqual(self.sent, [])
         self.assertIsNone(self.bridge._watching)
