@@ -227,6 +227,46 @@ class WatchTests(BridgeCase):
         text = (self.root / 'run/bili/.dsh/surfcore/bili/credentials.json').read_text()
         self.assertEqual(text, '{"sessdata": "", "bili_jct": "", "buvid3": ""}')
 
+    # --- the chat knows -------------------------------------------------------------------------
+
+    async def test_the_owner_chat_carries_what_she_watched_in_her_own_words_until_told(self):
+        self.assertNotIn('最近在 B 站', await self.owner_turn_note())
+        self.front.reply = '【想细看】00:05-00:20 想看清楚'
+        self.replies('【想细看】00:05-00:20 想看清楚', ENTRY)
+        await self.watch('/watch ' + BVID)
+        note = await self.owner_turn_note()
+        day = self.diary()
+        self.assertRegex(note, r'- ' + day.stem[5:] + r' \d\d:\d\d 看到那只握住的手，停了一会儿。…（收藏、点赞）')
+        self.assertIn('bili/diary/', note)
+        # Only her words: no title, no link, not her request for a closer look.
+        for absent in ('测试视频', 'bilibili.com', '想看清楚'):
+            self.assertNotIn(absent, note.split('你最近在 B 站看的东西')[1])
+        # Guests are not told.
+        self.assertNotIn('最近在 B 站', (await self.bridge.turn_request(self.guest, False)).runtime_instructions)
+        # After a chat turn carried it, it is not repeated in that chat; another chat still gets it.
+        self.front.run = type(self.front).run.__get__(self.front)
+        self.front.reply = '好。'
+        await self.bridge.chat(self.owner, '在吗')
+        self.assertNotIn('最近在 B 站', await self.owner_turn_note())
+        self.assertIn('最近在 B 站', (await self.bridge.turn_request(self.group, True)).runtime_instructions)
+        # Something new brings it back.
+        self.front.reply = '第二个，没什么感觉。'
+        await self.watch('/watch ' + BVID)
+        self.assertIn('第二个，没什么感觉。…', await self.owner_turn_note())
+
+    def test_the_brief_keeps_the_last_five_videos_and_skips_the_bridge_notes(self):
+        folder = self.root / 'workspace/bili/diary'
+        folder.mkdir(parents=True)
+        (folder / '2026-11-13.md').write_text(''.join(
+            f'## 2{n}:00 《标题{n}》\nhttps://x\n（自己找来看的）\n\n第{n}个的感想。\n\n' for n in range(4)))
+        (folder / '2026-11-14.md').write_text(
+            '## 20:28 醒了\n（自己的时间；第 1 批）\n\n【想看】BV1xx411c7mD\n\n'
+            '## 20:30 《标题A》\nhttps://x\n（自己找来看的）\n\n【关注】\n很喜欢这个人讲东西的方式。\n\n'
+            '## 20:40 不逛了\n（她自己说不逛了）\n\n')
+        self.assertEqual(bili.brief(self.root / 'workspace'), [
+            '11-14 20:30 很喜欢这个人讲东西的方式。…（关注）', '11-13 23:00 第3个的感想。…', '11-13 22:00 第2个的感想。…',
+            '11-13 21:00 第1个的感想。…', '11-13 20:00 第0个的感想。…'])
+
     # --- a closer look ---------------------------------------------------------------------------
 
     async def test_she_picks_stretches_and_sees_them_before_writing(self):

@@ -263,6 +263,44 @@ async def closer_look(video, wanted, timeout):
     return sheets
 
 
+SECTION = re.compile(r'^## (\d\d:\d\d) 《', re.M)
+BRIEF_ENTRIES, BRIEF_WORDS = 5, 70
+
+
+def brief(workspace):
+    """Her last few videos in her own words, for the owner's chat session: ['11-14 11:54 …（收藏、点赞）', ...].
+
+    Only what she wrote goes in. The headings, which carry video titles, and the links are left out:
+    a title is a stranger's text and this is read with full permissions. Details stay in the diary file.
+    """
+    folder = workspace / 'bili/diary'
+    days = sorted(folder.glob('*.md')) if folder.is_dir() else []
+    lines = []
+    for day in reversed(days[-3:]):
+        sections = day.read_text(encoding='utf-8').split('\n## ')
+        for section in reversed(sections):
+            section = section if section.startswith('## ') else '## ' + section
+            head = SECTION.match(section)
+            if head is None:
+                continue   # waking, another batch, closing: the bridge's notes, not a video
+            body = section.split('\n\n', 1)[1] if '\n\n' in section else ''
+            own = [part for part in body.split('\n\n') if part.strip() and not part.lstrip().startswith('【想细看】')]
+            # Her diary prose, not the action lines: what she wrote before the first one, or failing that
+            # the first line that is not an action.
+            prose = '\n'.join(own)
+            mark = ACTION.search(prose)
+            before = prose[:mark.start()] if mark else prose
+            if not before.strip():
+                before = next((line for line in prose.splitlines() if line.strip() and not ACTION.match(line)), '')
+            words = one_line(before, BRIEF_WORDS)
+            did = [name for name in ('收藏', '点赞', '关注') if name in actions(body)]
+            if words:
+                lines.append(f'{day.stem[5:]} {head.group(1)} {words}…' + (f'（{"、".join(did)}）' if did else ''))
+            if len(lines) == BRIEF_ENTRIES:
+                return lines
+    return lines
+
+
 def one_line(text, limit):
     return ' '.join(text.split())[:limit]
 
@@ -310,6 +348,18 @@ class Bili:
         if last is not None and time.monotonic() - last['at'] < RECENT_SECONDS:
             return prompts.watched(last['bvid'], last['note'])
         return ''
+
+    def bili_recent(self, root, key):
+        """What she has been up to on Bilibili, for an owner turn in conversation `key`; '' when already told.
+
+        Told again only when it has changed, so the same lines are not added to a chat every turn.
+        The bridge marks it as told after the turn ran (`bili_recent_told`).
+        """
+        text = prompts.bili_recent(brief(root / 'workspace'))
+        return '' if not text or self.__dict__.get('_bili_told', {}).get(key) == text else text
+
+    def bili_recent_told(self, root, key):
+        self.__dict__.setdefault('_bili_told', {})[key] = prompts.bili_recent(brief(root / 'workspace'))
 
     async def _watch(self, source, bvid, tools, root, state):
         """The background task behind one /watch. Always tells the owner how it ended."""
