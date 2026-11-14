@@ -471,6 +471,9 @@ class IndexSynthesizer:
         return data, metrics
 
 
+WARM_LINE = '嗯，我在呢，慢慢说。'
+
+
 def serve(source, output, factory):
     engine = None
     for line in source:
@@ -480,6 +483,15 @@ def serve(source, output, factory):
                 with contextlib.redirect_stdout(sys.stderr):
                     if engine is None:
                         engine = factory()
+                        # Loading the model is not all of the first line's cost: the first real
+                        # synthesis took 22-28 s against the usual 4-5 s. Speak one line that is
+                        # thrown away, so that cost is paid here and not by her first reply.
+                        # No scene and no conversation: nothing of it carries into real lines.
+                        try:
+                            engine.synthesize(WARM_LINE, 0, '日常', '中', None)
+                        except Exception as error:
+                            print('IndexTTS warm-up line failed: ' + type(error).__name__,
+                                  file=sys.stderr, flush=True)
                 response = {'ready': True}
                 output.write(json.dumps(response) + '\n')
                 output.flush()
