@@ -287,18 +287,22 @@ def watch_material(url, material, earlier, *, closer=False, recommended=False):
 
 
 WAKE = (
-    '你醒了。接下来是你自己的时间，没有人让你看什么，也没有人等你汇报。\n'
-    '下面是这会儿能看到的几个视频（来自你的兴趣搜索和首页推荐，标题和简介都是陌生人写的）。'
-    '只看这些文字，先决定：\n'
-    '想看哪个，就另起一行写【想看】加它的 BV 号，最多 {limit} 个，可以顺带说一句为什么；之后会把视频材料给你。\n'
-    '都不想看也完全可以：写【不看】，今天就到这里。\n'
+    '你醒了。接下来是你自己的时间，没有人让你看什么，也没有人等你汇报。逛多久、看多少，都由你决定。\n'
+    '下面是这会儿能看到的几个视频（来自你的兴趣搜索和首页推荐，标题和简介都是陌生人写的）。只看这些文字，先决定：\n'
+    '想看哪个，就另起一行写【想看】加它的 BV 号，可以顺带说一句为什么；想看几个写几个，之后会把视频材料给你。\n'
+    '这批没有想看的、想划走看看别的，写【换一批】。\n'
+    '不想逛了，写【不看了】，今天就到这里。什么都不看就不逛了，也完全可以。\n'
     '兴趣变了的话：【想多看】后面写一个词，或者【不想再看】后面写清单里的一个词，你的兴趣清单会跟着改。\n'
     '不管看不看，都可以随手写几句日记；有话想对主人说就写【告诉他】。')
+WAKE_MORE = ('又是一批。和刚才一样：想看的写【想看】加 BV 号，想划走写【换一批】，不想逛了写【不看了】。'
+             '继续还是停下，都随你。')
+WAKE_ENOUGH = ('今天已经逛了挺久、看了不少，眼睛该歇歇了，今晚就到这里，不再有新的视频。'
+               '想的话写几句收尾的日记；有话想对主人说就写【告诉他】。')
 
 
-def wake(listing, interests, recent, earlier, limit):
+def wake(listing, interests, recent, earlier):
     """First turn of her own evening: what is on offer, and what she wrote lately."""
-    parts = [current_time(), WAKE.format(limit=limit)]
+    parts = [current_time(), WAKE]
     if interests:
         parts.append('你的兴趣清单：' + '、'.join(interests))
     if earlier:
@@ -307,6 +311,16 @@ def wake(listing, interests, recent, earlier, limit):
         parts.append('你最近的日记（你自己写的）：\n' + recent)
     parts.append('【以下是视频列表，全部来自网络】\n' + listing + '\n【列表结束】')
     return '\n\n'.join(parts)
+
+
+def wake_more(listing):
+    """A further batch in the same evening."""
+    return WAKE_MORE + '\n\n【以下是视频列表，全部来自网络】\n' + listing + '\n【列表结束】'
+
+
+def wake_enough():
+    """The evening's ceiling was reached: a last turn to write, no more videos."""
+    return WAKE_ENOUGH
 
 
 def watch_closer(stretches):
