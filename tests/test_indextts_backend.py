@@ -6,7 +6,7 @@ from pathlib import Path
 import unittest
 import wave
 
-from tools.indextts_backend import (PRESETS, Continuity, SceneLibrary, cap_pauses, emotion_vector, match_level,
+from tools.indextts_backend import (PRESETS, WARM_LINE, Continuity, SceneLibrary, cap_pauses, emotion_vector, match_level,
                                     pcm_wav, serve, speaking_level, validate_request)
 import json as _json
 import tempfile
@@ -140,6 +140,25 @@ class IndexProtocolTests(unittest.TestCase):
         self.assertEqual(replies[:2], [{'ready': True}] * 2)
         self.assertIn('wav', replies[2])
         self.assertEqual(replies[3], {'error': 'synthesis_failed'})
+
+    def test_warmup_speaks_one_discarded_line(self):
+        calls = []
+        class Engine:
+            def synthesize(self, text, seed, style, intensity, scene, conversation=None):
+                calls.append((text, style, scene, conversation))
+                if len(calls) == 1:
+                    raise RuntimeError('first line broke')
+                return audio_bytes(), {}
+        output = io.StringIO()
+        lines = ['{"warmup": true}', '{"warmup": true}', '{"text": "你好"}']
+        with contextlib.redirect_stderr(io.StringIO()):
+            serve(io.StringIO('\n'.join(lines)), output, Engine)
+        replies = [json.loads(l) for l in output.getvalue().splitlines()]
+        # Once per load, without scene or conversation; its failure does not fail the warm-up.
+        self.assertEqual(calls[0], (WARM_LINE, '日常', None, None))
+        self.assertEqual([c[0] for c in calls], [WARM_LINE, '你好'])
+        self.assertEqual(replies[:2], [{'ready': True}] * 2)
+        self.assertIn('wav', replies[2])
 
     def test_rejects_invalid_audio_before_delivery(self):
         class Engine:
