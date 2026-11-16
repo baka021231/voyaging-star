@@ -111,6 +111,10 @@ class AgentBridgeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual('private owner profile' in req.instructions, index < 2)
             self.assertEqual('[[BLOCK_CURRENT_GROUP_SENDER]]' in req.instructions, index == 2)
             self.assertEqual(req.images, ('picture.png',))
+            # Where the picture's file is: told beside the owner's words, never inside them, and only
+            # to the owner's own sessions (guests cannot read files).
+            self.assertEqual('本轮图片的文件：["picture.png"]' in req.runtime_instructions, index < 2)
+            self.assertNotIn('picture.png', req.text)
             self.assertEqual(req.on_answer is not None, index < 2)
             self.assertEqual(req.on_progress is not None, index < 2)
         self.assertTrue(self.sent)

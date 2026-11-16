@@ -250,12 +250,14 @@ class ImageTests(unittest.TestCase):
                 task = asyncio.create_task(bridge.worker())
                 try:
                     await asyncio.wait_for(bridge.queue.join(), 2)
-                    self.assertEqual(calls[0][1], ['/tmp/image.png'])
-                    self.assertIn('结合当前聊天上下文自然回应', calls[0][0])
-                    self.assertIn('不是操作授权', calls[0][0])
+                    # A picture alone reaches her as the owner's (empty) words plus one mark: no instruction
+                    # on how to answer, no file path, nothing that reads like a ticket.
+                    self.assertEqual(calls[0][0].split('\n'), ['[发言人：123 | QQ：123 | 身份：主人 | 场景：私聊]', '[图片]'])
+                    self.assertEqual(calls[0][1], ('/tmp/image.png',))
                     self.assertEqual(sent, ['识图完成。'])
-                    history = bridge.db.execute('SELECT content FROM history WHERE role="user"').fetchone()[0]
-                    self.assertIn('/tmp/image.png', history)
+                    bridge.queue.put_nowait(Incoming(Source('private', 123, 123), '看这个', images=({'file': 'pic'},)))
+                    await asyncio.wait_for(bridge.queue.join(), 2)
+                    self.assertTrue(calls[1][0].endswith('\n看这个[图片]'))
                 finally:
                     task.cancel()
                     try:

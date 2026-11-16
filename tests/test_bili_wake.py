@@ -40,7 +40,9 @@ class WakeTests(BridgeCase):
         self.cfg['bili'] = {'tools': str(tools), 'wake': {'windows': [['20:00', '21:00']], 'skip_chance': 0}}
         (self.root / 'workspace/bili').mkdir()
         (self.root / 'workspace/bili/interests.md').write_text('# 想看的\n\n- 鸣潮\n- Linux\n')
-        self.clock = datetime(2026, 11, 14, 19, 0).astimezone()
+        # Today's date: a watched video's diary section is dated by the real clock (bili.py), and the
+        # tests expect one diary file per evening. A fixed date passed only on that date.
+        self.clock = datetime.now().astimezone().replace(hour=19, minute=0, second=0, microsecond=0)
         # One list per batch of the evening; after the last one there is nothing new.
         self.batches = [list(OFFER)]
         self.asked = []

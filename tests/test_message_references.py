@@ -180,7 +180,7 @@ class ReferenceRoutingTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(reads, ['get_forward_msg' if forward else 'get_msg'])
                 self.assertIn('/new quoted-only', result[1])
                 self.assertIn('以下才是本轮新消息', result[1])
-                self.assertTrue(result[1].endswith('看看这个') or '图片已保存' in result[1])
+                self.assertTrue(result[1].endswith('看看这个'))
                 self.assertEqual(result[0].sender_id, sender)
                 if quoted_image and not image_fails:
                     self.assertEqual(result[2], ('/temporary/reference.png',))
