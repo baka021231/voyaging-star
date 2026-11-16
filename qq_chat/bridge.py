@@ -270,6 +270,8 @@ class Bridge(Turns, OneBot, Store, Media, Commands, Bili, BiliWake):
         request.on_answer = answer_delta if stream_text else None
         request.show_tools = bool(self.cfg.get('show_tool_progress', False))
         request.images = tuple(image_paths)
+        if image_paths and authorized:
+            request.runtime_instructions += prompts.image_files(image_paths)
         try:
             reply = await self.agent_for(source).run(request)
             if answer_sender:
@@ -401,15 +403,16 @@ class Bridge(Turns, OneBot, Store, Media, Commands, Bili, BiliWake):
                 image_paths = ()
                 if incoming.images:
                     try:
-                        image_paths = await self.receive_images(incoming)
+                        image_paths = tuple(await self.receive_images(incoming))
                     except (ValueError, OSError, asyncio.TimeoutError) as error:
                         logging.warning('Image reception failed: %s', type(error).__name__)
                         await self.send(source, '图片接收失败：' + (str(error) if isinstance(error, ValueError) else '下载或保存失败，请重新发送。'))
                         continue
+                # Only the pictures of this message are marked in her words; those inside a quoted or
+                # forwarded message are already noted in the reference records.
+                text = prompts.with_images(text, len(image_paths))
                 if reference_images:
                     image_paths += await self.receive_reference_images(incoming, reference_images, reference_records)
-                if image_paths:
-                    text = prompts.images_saved(text, image_paths)
                 if await self.plain_command(source, text, incoming.context_id):
                     continue
                 if len(text) > 6000:
