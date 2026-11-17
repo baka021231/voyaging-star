@@ -11,6 +11,9 @@ from pathlib import Path
 from websockets.asyncio.client import unix_connect
 from .agents.base import Interrupted, ExecutionUncertain
 
+
+MAX_MESSAGE = 64 * 1024 * 1024
+
 class AppServer:
     def __init__(self, executable):
         self.executable = executable
@@ -44,8 +47,10 @@ class AppServer:
                 raise RuntimeError('Unable to start shared Codex daemon')
             codex_home = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex')))
             socket = codex_home / 'app-server-control' / 'app-server-control.sock'
+            # A thread keeps every picture she draws or looks at as data (about 3 MB each), and the app
+            # server sends parts of it back whole. At 8 MB three drawings broke every later turn (2026-11-18).
             self.ws = await unix_connect(str(socket.resolve()), open_timeout=15,
-                                         close_timeout=2, max_size=8*1024*1024, proxy=None)
+                                         close_timeout=2, max_size=MAX_MESSAGE, proxy=None)
             self.reader = asyncio.create_task(self.read())
             try:
                 await self.call('initialize', {'clientInfo': {'name': 'qq_bridge', 'version': '2.1'}, 'capabilities': {'experimentalApi': True}})
