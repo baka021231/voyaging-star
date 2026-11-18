@@ -41,6 +41,10 @@ class CodexAgent(Agent):
         options = {'cwd': str(self.cwd), 'approvalPolicy': 'never',
                    'sandbox': self.profile.get('sandbox', 'danger-full-access') if req.level == FULL else 'read-only',
                    'developerInstructions': req.instructions}
+        # The owner's replacement for Codex's built-in prompt. Without the file Codex keeps its own.
+        base = self.cwd / 'CODEX-BASE.md'
+        if base.is_file():
+            options['baseInstructions'] = base.read_text(encoding='utf-8')
         await self.start()
         if req.model is not None:
             options['model'] = req.model

@@ -203,6 +203,30 @@ class CodexAdapterTests(unittest.IsolatedAsyncioTestCase):
             await agent.run(TurnRequest('key', 'text', FULL, '', session_id='loaded',
                                        runtime_instructions='current'))
 
+    async def test_base_file_replaces_codex_prompt_for_every_level_only_when_present(self):
+        calls = []
+
+        class Transport:
+            async def start(self):
+                pass
+            async def call(self, method, params):
+                calls.append((method, params))
+                return {'thread': {'id': 'thread-%d' % len(calls)}}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            agent = CodexAgent(self.db, tmp, 'unused', app=Transport())
+            await agent.prepare(TurnRequest('before', 'text', FULL, 'persona'))
+            self.assertNotIn('baseInstructions', calls[-1][1])
+            Path(tmp, 'CODEX-BASE.md').write_text('你是爱弥斯。', encoding='utf-8')
+            for key, level in (('owner', FULL), ('guest', NONE)):
+                await agent.prepare(TurnRequest(key, 'text', level, 'persona'))
+                self.assertEqual(calls[-1][0], 'thread/start')
+                self.assertEqual(calls[-1][1]['baseInstructions'], '你是爱弥斯。')
+                self.assertEqual(calls[-1][1]['developerInstructions'], 'persona')
+            Path(tmp, 'CODEX-BASE.md').unlink()
+            await agent.prepare(TurnRequest('after', 'text', FULL, 'persona'))
+            self.assertNotIn('baseInstructions', calls[-1][1])
+
     async def test_cap_only_return_value_and_preserve_explicit_none_effort(self):
         captured, streamed = [], []
 
