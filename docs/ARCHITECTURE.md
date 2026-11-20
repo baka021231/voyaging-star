@@ -115,7 +115,7 @@ NapCat ◀──WebSocket── Bridge.send()  全局锁，间隔随机 2～3 �
 
 ## 一轮对话的组装
 
-发给 Codex 的内容分两部分：
+发给 Codex 的内容分两部分。另外，`workspace/CODEX-BASE.md` 存在时作为 `baseInstructions` 传入，替换 Codex 自带的系统提示；不存在时用自带的（`CodexAgent.prepare`）。它不经过 `prompts`，Claude Code 和 Grok 不读它：
 
 - **developerInstructions**：`prompts.OWNER` / `GUEST` + `SPEAKER_LABELS` + `WORKSPACE_RULES` + `workspace/SOUL.md`、`workspace/OWNER.md` 中存在的文件全文（依次加载，但 OWNER.md 只在 authorized=True 时读取）。每次 `thread/start` 或 `thread/resume` 时重新读取并传入，缺失则跳过。但当前已加载 Codex 线程的 `thread/resume` 不采用新的 developerInstructions，桥接规则及人设更新须 `/new` 创建新线程才生效；Claude/Grok 则每轮刷新。逐轮记忆命令单独通过 `runtime_instructions` 在 `turn/start` 前注入可信 developer 历史项，这不等于完整人设热更新。AGENTS.md 不由桥接读取或注入，保留 Codex 按 cwd 原生加载。
 - **本轮输入**，依次为：

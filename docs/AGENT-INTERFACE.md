@@ -43,7 +43,7 @@ QQ ⇄ NapCat ⇄ 桥接 ⇄ 统一接口 ⇄ 适配器（Codex / Claude Code / 
 
 | agent | 人设（SOUL.md / OWNER.md）如何送达 | 修改后何时生效 |
 | --- | --- | --- |
-| Codex | 作为 developerInstructions 在 `thread/start` 写入线程 | 已加载线程 `thread/resume` 不采用新值，实际要 `/new` 新线程才生效 |
+| Codex | 作为 developerInstructions 在 `thread/start` 写入线程；自带的系统提示可由 `workspace/CODEX-BASE.md` 经 `baseInstructions` 替换（2026-11-16 起） | 已加载线程 `thread/resume` 不采用新值，实际要 `/new` 新线程才生效 |
 | Claude Code | NONE/FRONT 用 `--system-prompt-file` 替换系统提示，FULL 用 `--append-system-prompt-file`，每轮重写 | 下一轮 |
 | Grok | 每轮写入 prompt 文件第一个文本块，与用户消息一起送入 | 下一轮；但每轮完整设定都留在会话历史里 |
 

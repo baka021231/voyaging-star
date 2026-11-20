@@ -108,6 +108,7 @@ Claude `/models` 读取 profile 的配置目录，`/model default` 恢复其配�
 - 每个会话按 profile 保存持久会话映射；Codex 对应线程，Claude/Grok 对应各自 CLI 会话。QQ 会话范围是：主人私聊一条，每个群一条；主人在群里另有一条单独的操作线程，不与群友的聊天线程混用（`conversation_key`，`test_chat_passes_permissions_and_resumes_separate_threads`）。
 - 桥接重启后优先恢复对应 profile 的原会话；会话丢失时按各适配器规则处理，不能保证任意远端/CLI 会话永不丢失。
 - 桥接每轮重新读取 `workspace/SOUL.md` 和 `workspace/OWNER.md`，依次注入，OWNER.md 仅限核验主人会话，缺失则跳过。Claude/Grok 的人设下一轮刷新；Codex 已加载线程的 `thread/resume` 不采用新的 developerInstructions，修改桥接规则或 SOUL/OWNER 后需要 `/new` 新线程才生效。逐轮记忆授权另用可信 developer 历史项注入，不能据此推断整套人设也已热更新；AGENTS.md 仅由 Codex 原生加载，不再手动注入。
+- Codex 自带的那段系统提示（开头是“You are Codex”，约两万字）可以整段换掉：`workspace/CODEX-BASE.md` 存在时，桥接在 `thread/start` 和 `thread/resume` 时把它作为 `baseInstructions` 传入，主人、群友、看 B 站的会话都用它；文件不存在时 Codex 用自带的。和人设一样，要 `/new` 新线程才生效。主人 2026-11-16 起用的版本把开头改成“你是爱弥斯”，删了 Personality、PR 说明、弹窗提问、排版和画图几段，其余照原文。撤回：删掉这个文件，再 `/new`。
 - 详细的线程映射和终端接续方法见 `docs/APPSERVER-MIGRATION.md`。
 
 ## 回复
