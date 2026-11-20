@@ -1,3 +1,35 @@
+# Voyaging Star
+
+**An LLM companion agent that lives in QQ.**
+
+Voyaging Star is a companion agent I built for myself. Its persona is Aemeath (爱弥斯). It runs on my own computer and serves only me; it is not a general-purpose chatbot.
+
+What makes it interesting is how much the agent decides for itself: whether a reply should be spoken aloud, whether to look something up in its memory and where, and what to watch on Bilibili tonight and for how long.
+
+## What she can do
+
+- **Chat in a consistent persona**, in private and group chats. Her persona is part of every turn, and in my chats so is what she knows about me.
+- **Remember me.** She keeps a diary that is organised every night at 22:00, and during a chat she can search her past records on her own.
+- **Speak in her own voice.** She decides which lines to say aloud and describes the tone she wants; the system picks the closest of about 300 lines of her original voice as the reference and synthesises the speech.
+- **Live her own life.** Each day she wakes up at some point in a time window to browse Bilibili. The wake-up time, and the occasional "not tonight", are random; once there, she chooses what to watch, how long to stay and what to save, and writes a diary for herself.
+- **Help me with work.** In my private chat she can read and write files and run commands on my computer: keeping a pomodoro timer while I study, editing code, and even changing the code of this project, that is, her own.
+- **Keep boundaries with others.** Group members and guests get separate sessions with very limited permissions and cannot see my private information.
+
+## How a message flows
+
+QQ message arrives → check who sent it and whether to reply → queue → assemble the context (persona, notes about me, the current time, what she has watched on Bilibili lately) → run the agent, which may call its memory-search and speech tools → split the reply into several chat bubbles and send them → save to history.
+
+The main backend is the Codex App Server. Guests in private chat use Claude Code, group chats use a read-only Codex session, and I can switch my own chat to Grok at any time.
+
+## Acknowledgements
+
+- **QQ access:** [NapCat](https://github.com/NapNeko/NapCatQQ) (OneBot 11)
+- **Voice:** [IndexTTS2](https://github.com/index-tts/index-tts), with a fine-tuned Aemeath voice model by [RovenNovo](https://github.com/RovenNovo); [bge-m3](https://huggingface.co/BAAI/bge-m3) for retrieving reference lines, and [Whisper](https://github.com/openai/whisper) for transcribing them when building the library
+- **Bilibili:** read-only commands from [SurfCore](https://github.com/Mieksido/surfcore) (MIT)
+- **Design:** many ideas inspired by [MaiBot](https://github.com/Mai-with-u/MaiBot)
+
+---
+
 # 远航星（Voyaging Star）
 
 远航星是运行在本机的 QQ 机器人桥接服务：通过 NapCat（OneBot 11）收发 QQ 消息，交由本机 Agent 会话处理并回复，支持 Codex、Claude Code 和主人单 agent Grok。
